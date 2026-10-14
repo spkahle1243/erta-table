@@ -627,6 +627,11 @@ export class MapView {
       c.textAlign = 'center'; c.textBaseline = 'middle';
       c.fillText(initials(t.name), cx, cy + r * 0.05);
     }
+    // whose turn it is
+    if (this.activeToken === t.id) {
+      c.save(); c.shadowColor = '#F2D27A'; c.shadowBlur = gr.size * 0.35; c.lineWidth = Math.max(3, gr.size * 0.08); c.strokeStyle = '#F2D27A';
+      c.beginPath(); c.arc(cx, cy, r + gr.size * 0.1, 0, Math.PI * 2); c.stroke(); c.restore();
+    }
     // ring
     c.lineWidth = Math.max(2, gr.size * 0.06);
     c.strokeStyle = ring; c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2); c.stroke();

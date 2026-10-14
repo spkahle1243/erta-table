@@ -9,10 +9,16 @@ import { FogMask, compact } from './fog.js';
 import { AudioEngine, audioDuration } from './audio.js';
 import { newCampaign, newCharacter, newScene, newToken, tokenStats, playerView, THEMES, DISPOSITION_COLORS } from './model.js';
 import { ICONS, modal, confirmBox, promptBox, popover, closePopover, hpConditionsEditor, conditionChips, renderHandout, avatar } from './ui.js';
+import { roll as rollDice, withAdvantage, DiceOverlay, RollLog } from './dice.js';
+import { newCombat, combatant, sortCombat, current as currentCombatant, advance, combatView, renderStrip } from './combat.js';
+import { loadBestiary, searchBestiary, renderStatBlock } from './statblock.js';
+
+const DM_COLOR = '#E5916A';
 
 const S = {
   camp: null, viewId: null, host: null, view: null, audio: null,
   selection: [], tab: 'scene', activeFog: new FogMask(), panelDirty: false,
+  dice: null, log: null,
 };
 window.__dm = S; // handy for debugging from the console
 
@@ -50,9 +56,9 @@ async function renderHome() {
 async function createStarter(theme) {
   const c = newCampaign({ name: theme === 'ironclad' ? 'Ironclad Inquiries' : 'Erta', theme });
   if (theme === 'ironclad') {
-    c.characters.push(newCharacter(c, { name: 'Boon Gultor', player: 'Andy', color: '#B0421D', hp: 70, ac: 23, speed: '60 ft' }));
-    c.characters.push(newCharacter(c, { name: 'Orek Opaldigger', player: 'Colin', color: '#5A4A8C', hp: 108, ac: 17, speed: '30 ft' }));
-    c.characters.push(newCharacter(c, { name: 'Vali', player: 'Eddy', color: '#8A5F0A', hp: 132, ac: 22, speed: '35 ft' }));
+    c.characters.push(newCharacter(c, { name: 'Boon Gultor', player: 'Andy', color: '#B0421D', hp: 70, ac: 23, speed: '60 ft', init: 2 }));
+    c.characters.push(newCharacter(c, { name: 'Orek Opaldigger', player: 'Colin', color: '#5A4A8C', hp: 108, ac: 17, speed: '30 ft', init: 2 }));
+    c.characters.push(newCharacter(c, { name: 'Vali', player: 'Eddy', color: '#8A5F0A', hp: 132, ac: 22, speed: '35 ft', init: 2 }));
   }
   await campaigns.put(c);
   openCampaign(c.id);
@@ -90,7 +96,11 @@ function migrate(c) {
   c.audio.library ||= [];
   c.settings ||= { diagonals: 'equal', monsterHealth: 'bloodied' };
   c.handouts ||= [];
-  for (const s of c.scenes) { s.templates ||= []; s.fog ||= { on: true, ops: [] }; s.kind ||= 'map'; }
+  c.rolls ||= [];
+  c.actors ||= {};
+  if (c.combat === undefined) c.combat = null;
+  for (const ch of c.characters) ch.init ??= 0;
+  for (const s of c.scenes) { s.templates ||= []; s.fog ||= { on: true, ops: [] }; s.kind ||= 'map'; for (const t of s.tokens) t.init ??= 0; }
 }
 
 const save = debounce(async () => {
@@ -130,6 +140,7 @@ function startHost() {
   host.on('join', (pid, info) => {
     toast(`${info.name} joined`, 'ok');
     host.send(pid, { t: 'welcome', view: viewFor(info.charId) });
+    host.send(pid, { t: 'rolls', list: S.camp.rolls.filter(r => !r.hidden).slice(-40) });
   });
   host.on('leave', (pid, info) => toast(`${info.name} left`));
   host.on('message', onPlayerMessage);
@@ -193,6 +204,21 @@ function onPlayerMessage(pid, m, info) {
       if (i >= 0) change(() => sc.templates.splice(i, 1), { panel: false });
       return;
     }
+    case 'roll': {
+      const ch = c.characters.find(x => x.id === info.charId);
+      const r = sanitizeRoll(m.roll);
+      if (!r || !ch) return;
+      r.by = { name: ch.name, color: ch.color, charId: ch.id };
+      r.hidden = false;
+      recordRoll(r);
+      S.host.broadcast({ t: 'roll', roll: r }, pid);
+      showRoll(r);
+      if (m.purpose === 'init' && c.combat) {
+        const e = c.combat.list.find(x => x.charId === ch.id);
+        if (e) change(() => { e.init = r.total; sortCombat(c.combat); if (c.combat.list.every(x => x.init != null)) c.combat.askInit = false; }, { panel: S.tab === 'combat' });
+      }
+      return;
+    }
     case 'pc': {
       const ch = c.characters.find(x => x.id === info.charId);
       if (!ch) return;
@@ -203,6 +229,45 @@ function onPlayerMessage(pid, m, info) {
       return;
     }
   }
+}
+
+function sanitizeRoll(r) {
+  if (!r || !Array.isArray(r.terms) || r.terms.length > 40) return null;
+  let total = 0;
+  for (const t of r.terms) {
+    if (t.kind === 'num') total += (t.sign < 0 ? -1 : 1) * (Number(t.v) || 0);
+    else if (t.kind === 'dice') {
+      if (!Array.isArray(t.results) || t.results.length > 100) return null;
+      if (t.results.some(x => !(x.v >= 1 && x.v <= t.sides))) return null;
+      total += (t.sign < 0 ? -1 : 1) * t.results.filter(x => !x.dropped).reduce((a, x) => a + x.v, 0);
+    } else return null;
+  }
+  if (total !== r.total) return null;
+  return { id: String(r.id).slice(0, 20), formula: String(r.formula).slice(0, 80), label: String(r.label || '').slice(0, 120), terms: r.terms, total, nat: r.nat, ts: Date.now() };
+}
+
+function recordRoll(r) {
+  S.camp.rolls.push(r);
+  if (S.camp.rolls.length > 200) S.camp.rolls.splice(0, S.camp.rolls.length - 200);
+  save();
+}
+
+async function showRoll(r) {
+  await S.dice?.show(r, r.by?.color || DM_COLOR);
+  S.log?.add(r, { mine: r.by?.name === 'DM' });
+}
+
+// The DM rolls: formula + options. Returns the roll.
+function dmRoll(formula, { mode = null, hidden = null, label = '' } = {}) {
+  if (hidden == null) hidden = !!document.getElementById('roll-hidden')?.checked;
+  let r;
+  try { r = rollDice(withAdvantage(formula, mode || S.log?.mode), { label, hidden, by: { name: 'DM', color: DM_COLOR } }); }
+  catch (e) { toast(e.message, 'bad'); return null; }
+  if (/d20/.test(formula)) S.log?.clearMode();
+  recordRoll(r);
+  if (!hidden) S.host?.broadcast({ t: 'roll', roll: r });
+  showRoll(r);
+  return r;
 }
 
 const clampInt = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round(Number(v) || 0)));
@@ -261,6 +326,8 @@ function buildApp() {
       el('div', { class: 'subbar', id: 'subbar', hidden: true }),
       el('div', { class: 'players-see', id: 'players-see' }),
       el('div', { class: 'banner', id: 'banner', hidden: true }),
+      el('div', { class: 'combat-strip', id: 'combat-strip', hidden: true }),
+      el('div', { class: 'dock', id: 'dock' }),
       el('div', { class: 'empty-stage', id: 'empty-stage', hidden: true })),
     el('aside', { class: 'panel', id: 'panel' },
       el('div', { class: 'tabs', role: 'tablist', id: 'tabs' }),
@@ -291,6 +358,13 @@ function buildApp() {
     onDropData: (charId, wx, wy) => placePc(charId, wx, wy),
   });
   buildToolbar();
+  S.dice = new DiceOverlay();
+  const dock = $('#dock');
+  const head = el('button', { class: 'dock-h', type: 'button', onclick: () => { dock.classList.toggle('closed'); localStorage.setItem('erta-dock', dock.classList.contains('closed') ? 'closed' : 'open'); } }, el('span', {}, 'Dice & rolls'), el('span', { class: 'chev' }, '▾'));
+  dock.append(head);
+  if (localStorage.getItem('erta-dock') === 'closed') dock.classList.add('closed');
+  S.log = new RollLog(dock, { canHide: true, onRoll: (f, o) => dmRoll(f, o) });
+  S.log.setAll(S.camp.rolls.slice(-60));
 }
 
 const dragOut = throttle((id, x, y) => S.host.broadcast({ t: 'drag', id, x, y }), 50);
@@ -345,6 +419,7 @@ function buildToolbar() {
   tb.append(el('div', { class: 'grp' }, el('button', { class: 'tool', type: 'button', 'aria-label': 'Fit map', html: ICONS.fit + '<span class="tip">Fit map to screen</span>', onclick: () => S.view.fit() })));
   window.addEventListener('keydown', e => {
     if (!S.camp || e.ctrlKey || e.metaKey || e.altKey || e.target.closest('input, textarea, select')) return;
+    if (e.key.toLowerCase() === 'n' && S.camp.combat) { nextTurn(); return; }
     const t = KEYS[e.key.toLowerCase()]; if (t) setTool(t);
   });
 }
@@ -414,9 +489,26 @@ function refreshMap() {
       el('span', { class: 'chip', title: 'What the players are looking at' }, 'Players see: ' + (act ? act.name : 'nothing yet')),
       el('button', { class: 'btn small primary', type: 'button', onclick: () => activate(sc.id) }, 'Show this to players')));
   } else if (sc) ps.append(el('span', { class: 'chip', style: { color: 'var(--jade)', borderColor: 'var(--jade-line)' } }, '● Live for players'));
+  renderCombatStrip();
   const banner = $('#banner');
   banner.hidden = !S.camp.paused; banner.textContent = 'Game paused: players can’t move tokens';
   renderStatus();
+}
+
+function renderCombatStrip() {
+  const c = S.camp.combat;
+  const v = c ? { ...combatView(c, null), list: c.list.map(x => ({ ...x })), current: currentCombatant(c)?.id } : null;
+  renderStrip($('#combat-strip'), v, { resolveImg: id => assets.url(id), onClick: x => focusToken(x.tokenId) });
+  S.view.activeToken = currentCombatant(c)?.tokenId || null;
+  S.view.dirty = true;
+}
+
+function focusToken(tokenId) {
+  const sc = scene(); const t = sc?.tokens.find(t => t.id === tokenId);
+  if (!t) return;
+  S.view.selected = new Set([t.id]); S.selection = [t.id];
+  const c = S.view.tokenCenter(t); S.view.centerOn(c.x, c.y);
+  if (S.tab === 'tokens') renderPanel(true);
 }
 
 function dmSceneView(sc) {
@@ -536,7 +628,7 @@ function tokenHud(id, x, y) {
 
 // ======================================================================= side panel
 
-const TABS = [['scene', 'Scene'], ['tokens', 'Tokens'], ['party', 'Party'], ['audio', 'Audio'], ['handouts', 'Handouts'], ['settings', 'Settings']];
+const TABS = [['scene', 'Scene'], ['tokens', 'Tokens'], ['combat', 'Combat'], ['party', 'Party'], ['audio', 'Audio'], ['handouts', 'Handouts'], ['settings', 'Settings']];
 
 function renderTabs() {
   const tabs = $('#tabs'); tabs.innerHTML = '';
@@ -549,7 +641,7 @@ function renderPanel(force = false) {
   S.panelDirty = false;
   const top = pane.scrollTop;
   pane.innerHTML = '';
-  const fn = { scene: paneScene, tokens: paneTokens, party: paneParty, audio: paneAudio, handouts: paneHandouts, settings: paneSettings }[S.tab];
+  const fn = { scene: paneScene, tokens: paneTokens, combat: paneCombat, party: paneParty, audio: paneAudio, handouts: paneHandouts, settings: paneSettings }[S.tab];
   pane.append(fn());
   pane.scrollTop = top;
 }
@@ -678,11 +770,14 @@ function tokenEditor(sc, t) {
         el('label', { class: 'field' }, el('span', {}, 'AC'), num(t.ac, v => change(() => { t.ac = v; }))),
         el('label', { class: 'field' }, el('span', {}, 'Size (squares)'), num(t.size, v => v >= 1 && change(() => { t.size = Math.min(8, Math.round(v)); }), { min: 1, max: 8 })),
         el('label', { class: 'field' }, el('span', {}, 'Attitude'), disp)),
+      el('div', { class: 'grid3' }, el('label', { class: 'field' }, el('span', {}, 'Initiative bonus'), num(t.init || 0, v => change(() => { t.init = v || 0; })))),
       el('div', { class: 'row' },
         el('label', { class: 'check' }, (() => { const c = el('input', { type: 'checkbox', checked: t.hidden }); c.addEventListener('change', () => change(() => { t.hidden = c.checked; })); return c; })(), 'Hidden from players'),
         el('button', { class: 'btn small', type: 'button', onclick: async () => { const [f] = await pickFiles({ accept: 'image/*' }); if (f) { const id = await assets.put(f, f.name); change(() => { t.img = id; }); } } }, 'Token image…')));
   } else box.append(el('p', { class: 'small muted' }, 'Party token: HP, AC and conditions come from the character (Party tab), and the player can change HP and conditions too.'));
   box.append(hpConditionsEditor(data, patch => change(() => Object.assign(target, patch), { panel: false }), { showMax: !ch }));
+  const actor = t.actorId && S.camp.actors[t.actorId];
+  if (actor) box.append(el('details', { open: true }, el('summary', { class: 'small' }, 'Stat block'), renderStatBlock(actor, { onRoll: (f, label) => dmRoll(f, { label: label.replace(actor.name, st.name) }) })));
   box.append(el('div', { class: 'row' },
     el('button', { class: 'btn small', type: 'button', onclick: () => { const copy = { ...clone(t), id: uid(10), x: t.x + t.size }; if (!copy.charId) { copy.name = nextName(sc, t.name); change(() => sc.tokens.push(copy)); } } }, 'Duplicate'),
     el('button', { class: 'btn small', type: 'button', onclick: () => { const c = S.view.tokenCenter(t); S.view.centerOn(c.x, c.y); } }, 'Find on map'),
@@ -704,12 +799,25 @@ function addTokenDialog(sc) {
   const count = el('input', { type: 'number', value: 1, min: 1, max: 20 });
   const disp = el('select', {}, ['hostile', 'neutral', 'friendly'].map(d => el('option', { value: d }, d)));
   const hidden = el('input', { type: 'checkbox', checked: true });
-  let file = null;
+  let file = null, picked = null;
   const fl = el('span', { class: 'small muted' }, 'Initials token');
+  const find = el('input', { type: 'text', placeholder: 'Search the 2024 SRD monsters (e.g. xorn, stone giant)' });
+  const hits = el('div', { class: 'hits' });
+  const init = el('input', { type: 'number', value: 0 });
+  find.addEventListener('input', async () => {
+    const q = find.value; const res = await searchBestiary(q, 8);
+    if (find.value !== q) return;
+    hits.innerHTML = '';
+    for (const m of res) hits.append(el('button', { class: 'btn small', type: 'button', onclick: () => {
+      picked = m; name.value = m.name; hp.value = m.hp.max; ac.value = m.ac; init.value = m.init;
+      size.value = String(Math.max(1, Math.round(m.squares))); hits.innerHTML = ''; find.value = m.name + ` (CR ${m.crText})`;
+    } }, `${m.name} · CR ${m.crText}`));
+  });
   modal({ title: 'Add tokens', body: el('div', { class: 'stack' },
+    el('label', { class: 'field' }, el('span', {}, 'From the bestiary'), find), hits,
     el('label', { class: 'field' }, el('span', {}, 'Name'), name),
     el('div', { class: 'grid3' }, el('label', { class: 'field' }, el('span', {}, 'HP'), hp), el('label', { class: 'field' }, el('span', {}, 'AC'), ac), el('label', { class: 'field' }, el('span', {}, 'How many'), count)),
-    el('div', { class: 'grid2' }, el('label', { class: 'field' }, el('span', {}, 'Size'), size), el('label', { class: 'field' }, el('span', {}, 'Attitude'), disp)),
+    el('div', { class: 'grid3' }, el('label', { class: 'field' }, el('span', {}, 'Size'), size), el('label', { class: 'field' }, el('span', {}, 'Attitude'), disp), el('label', { class: 'field' }, el('span', {}, 'Init bonus'), init)),
     el('div', { class: 'row' }, el('button', { class: 'btn small', type: 'button', onclick: async () => { [file] = await pickFiles({ accept: 'image/*' }); fl.textContent = file ? file.name : 'Initials token'; } }, 'Image…'), fl),
     el('label', { class: 'check' }, hidden, 'Start hidden from players')),
   actions: [{ label: 'Cancel' }, { label: 'Add', kind: 'primary', run: async () => {
@@ -717,8 +825,100 @@ function addTokenDialog(sc) {
     const g = sc.grid, n = Math.max(1, Math.min(20, +count.value || 1));
     const cx = Math.floor((S.view.cam.x - g.ox) / g.size), cy = Math.floor((S.view.cam.y - g.oy) / g.size);
     const base = name.value.trim() || 'Creature', sz = +size.value;
-    change(() => { for (let i = 0; i < n; i++) sc.tokens.push(newToken({ name: n > 1 ? `${base} ${i + 1}` : base, img, hp: { value: +hp.value || 1, max: +hp.value || 1, temp: 0 }, ac: +ac.value || 10, size: sz, disposition: disp.value, hidden: hidden.checked, x: cx + (i % 4) * sz, y: cy + Math.floor(i / 4) * sz })); });
+    let actorId = null;
+    if (picked) { actorId = 'srd:' + picked.id; S.camp.actors[actorId] ||= picked; }
+    change(() => { for (let i = 0; i < n; i++) sc.tokens.push(newToken({ name: n > 1 ? `${base} ${i + 1}` : base, img, actorId, init: +init.value || 0, hp: { value: +hp.value || 1, max: +hp.value || 1, temp: 0 }, ac: +ac.value || 10, size: sz, disposition: disp.value, hidden: hidden.checked, x: cx + (i % 4) * sz, y: cy + Math.floor(i / 4) * sz })); });
   } }] });
+}
+
+// ---------------------------------------------------------------- Combat tab
+function tokenCombatant(sc, t) {
+  const st = tokenStats(S.camp, t);
+  const ch = t.charId && S.camp.characters.find(c => c.id === t.charId);
+  return combatant({ tokenId: t.id, charId: t.charId, name: st.name, img: st.img, color: t.charId ? st.color : null, bonus: ch ? (ch.init || 0) : (t.init || 0), hidden: t.hidden });
+}
+
+function startCombat(which) {
+  const sc = scene(); if (!sc) return;
+  const tokens = which === 'selected' ? sc.tokens.filter(t => S.selection.includes(t.id)) : sc.tokens;
+  if (!tokens.length) { toast(which === 'selected' ? 'Select tokens on the map first (Shift-click for several)' : 'No tokens on this scene', 'bad'); return; }
+  change(c => { c.combat = newCombat(tokens.map(t => tokenCombatant(sc, t))); c.combat.sceneId = sc.id; });
+}
+
+function rollNpcInit(all = false) {
+  const c = S.camp.combat; if (!c) return;
+  const todo = c.list.filter(x => !x.charId && (all || x.init == null));
+  if (!todo.length) { toast('Every monster already has initiative'); return; }
+  // One roll per distinct monster name, like rolling a group together.
+  const byName = new Map();
+  for (const x of todo) {
+    const key = x.name.replace(/\s+\d+$/, '');
+    if (!byName.has(key)) {
+      const r = dmRoll(`1d20${x.bonus >= 0 ? '+' : ''}${x.bonus}`, { label: `${key}: Initiative`, hidden: true });
+      byName.set(key, r?.total ?? 10);
+    }
+    x.init = byName.get(key);
+  }
+  change(() => sortCombat(c));
+}
+
+function paneCombat() {
+  const c = S.camp.combat;
+  const wrap = el('div', { class: 'stack' });
+  if (!c) {
+    wrap.append(el('h3', {}, 'Combat'),
+      el('p', { class: 'small muted' }, 'Start a fight with everyone on this scene, or with the tokens you’ve selected (Shift-click to select several). Hidden monsters join hidden: players won’t see them in the turn order until you reveal them.'),
+      el('div', { class: 'row' },
+        el('button', { class: 'btn primary', type: 'button', onclick: () => startCombat('scene') }, 'Everyone on this scene'),
+        el('button', { class: 'btn', type: 'button', onclick: () => startCombat('selected') }, `Selected (${S.selection.length})`)));
+    return wrap;
+  }
+  const cur = currentCombatant(c);
+  const missing = c.list.filter(x => x.init == null);
+  wrap.append(
+    el('div', { class: 'row' }, el('h3', { class: 'grow', style: { margin: 0 } }, c.started ? `Round ${c.round}` : 'Initiative'),
+      el('button', { class: 'btn small danger', type: 'button', onclick: async () => { if (await confirmBox('End combat?', 'The turn order will be cleared.', { ok: 'End combat' })) change(cc => { cc.combat = null; }); } }, 'End')),
+    el('div', { class: 'row' },
+      el('button', { class: 'btn small', type: 'button', onclick: () => rollNpcInit(false) }, 'Roll monsters'),
+      el('button', { class: 'btn small' + (c.askInit ? ' copper' : ''), type: 'button', onclick: () => change(() => { c.askInit = !c.askInit; }) }, c.askInit ? 'Waiting on players…' : 'Ask players to roll'),
+      el('button', { class: 'btn small', type: 'button', onclick: () => { const sc = scene(); const have = new Set(c.list.map(x => x.tokenId)); const add = sc.tokens.filter(t => S.selection.includes(t.id) && !have.has(t.id)); if (!add.length) return toast('Select tokens not already in the fight'); change(() => { c.list.push(...add.map(t => tokenCombatant(sc, t))); sortCombat(c); }); } }, '+ Selected')),
+    missing.length ? el('p', { class: 'small', style: { color: 'var(--copper)' } }, `Waiting on initiative: ${missing.map(x => x.name).join(', ')}`) : null,
+  );
+  const list = el('div', { class: 'list' });
+  c.list.forEach((x, i) => {
+    const sc = scene();
+    const t = sc?.tokens.find(t => t.id === x.tokenId);
+    const st = t ? tokenStats(S.camp, t) : null;
+    const ini = el('input', { type: 'number', value: x.init ?? '', placeholder: '–', style: { width: '52px', textAlign: 'center', padding: '4px' }, 'aria-label': 'Initiative' });
+    ini.addEventListener('click', e => e.stopPropagation());
+    ini.addEventListener('change', () => change(() => { x.init = ini.value === '' ? null : Number(ini.value); sortCombat(c); }));
+    const f = st?.hp?.max ? Math.max(0, st.hp.value / st.hp.max) : null;
+    list.append(el('div', { class: 'li cbt' + (cur?.id === x.id ? ' sel' : '') + (x.defeated ? ' down' : ''), onclick: () => focusToken(x.tokenId) },
+      ini,
+      el('div', { style: { minWidth: 0 } }, el('div', { class: 'nm' }, x.name + (x.hidden ? ' (hidden)' : '')),
+        f != null ? el('div', { class: 'hpline' }, el('span', { class: 'bar' }, el('i', { style: { width: f * 100 + '%', background: f > .5 ? '#4f9d69' : f > .25 ? '#d6a73c' : '#c8553d' } })), `${st.hp.value}/${st.hp.max}`) : el('div', { class: 'small muted' }, 'token not on this scene')),
+      el('div', { class: 'row', style: { gap: '2px' } },
+        el('button', { class: 'btn icon ghost', type: 'button', title: x.hidden ? 'Show in players’ turn order' : 'Hide from players', html: x.hidden ? ICONS.eyeoff : ICONS.eye, onclick: e => { e.stopPropagation(); change(() => { x.hidden = !x.hidden; }); } }),
+        el('button', { class: 'btn icon ghost', type: 'button', title: x.defeated ? 'Back in the fight' : 'Defeated (skipped)', html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 5l14 14M19 5L5 19"/></svg>', style: x.defeated ? { color: 'var(--danger)' } : null, onclick: e => { e.stopPropagation(); change(() => { x.defeated = !x.defeated; }); } }),
+        el('button', { class: 'btn icon ghost', type: 'button', title: 'Remove from combat', html: ICONS.x, onclick: e => { e.stopPropagation(); change(() => { const wasCur = i === c.turn; c.list.splice(i, 1); if (i < c.turn || (wasCur && c.turn >= c.list.length)) c.turn = Math.max(0, c.turn - (i < c.turn ? 1 : 0)); if (c.turn >= c.list.length) c.turn = 0; }); } }))));
+  });
+  wrap.append(list);
+  wrap.append(el('div', { class: 'row', style: { marginTop: '6px' } },
+    c.started ? el('button', { class: 'btn', type: 'button', onclick: () => change(() => advance(c, -1)) }, '◂ Back') : null,
+    el('button', { class: 'btn primary grow', type: 'button', onclick: () => nextTurn() }, c.started ? 'Next turn ▸' : 'Begin round 1 ▸')));
+  wrap.append(el('p', { class: 'small muted' }, 'Players see the order across the top of their map and get a nudge when their turn comes up. Shortcut: N for next turn.'));
+  return wrap;
+}
+
+function nextTurn() {
+  const c = S.camp.combat; if (!c) return;
+  if (!c.started && c.list.some(x => x.init == null)) { toast('Some combatants have no initiative yet', 'bad'); }
+  change(() => { sortCombat(c); advance(c, 1); });
+  const cur = currentCombatant(c);
+  if (cur && !cur.hidden) {
+    S.host.broadcast({ t: 'turn', id: cur.id, charId: cur.charId, name: cur.name, round: c.round });
+    if (cur.tokenId && viewingActive()) { const t = scene()?.tokens.find(t => t.id === cur.tokenId); if (t) { const p = S.view.tokenCenter(t); S.view.addPing(p.x, p.y, '#E5916A'); } }
+  }
 }
 
 // ---------------------------------------------------------------- Party tab
@@ -751,6 +951,7 @@ function paneParty() {
           el('label', { class: 'field' }, el('span', {}, 'AC'), num(ch.ac, v => change(() => { ch.ac = v; }))),
           el('label', { class: 'field' }, el('span', {}, 'Speed'), txt(ch.speed, v => change(() => { ch.speed = v; }))),
           el('label', { class: 'field' }, el('span', {}, 'Size'), num(ch.size || 1, v => v >= 1 && change(() => { ch.size = Math.min(4, Math.round(v)); }), { min: 1, max: 4 }))),
+        el('div', { class: 'grid3' }, el('label', { class: 'field' }, el('span', {}, 'Initiative bonus'), num(ch.init || 0, v => change(() => { ch.init = v || 0; for (const x of S.camp.combat?.list || []) if (x.charId === ch.id) x.bonus = v || 0; })))),
         el('div', { class: 'row' }, color, el('button', { class: 'btn small', type: 'button', onclick: async () => { const [f] = await pickFiles({ accept: 'image/*' }); if (f) { const id = await assets.put(f, f.name); change(() => { ch.img = id; }); } } }, 'Token image…')),
         hpConditionsEditor(data, patch => change(() => Object.assign(ch, patch), { panel: false })),
         el('div', { class: 'row' },

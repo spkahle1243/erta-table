@@ -1,5 +1,6 @@
 // Campaign data model: factories, rules helpers and the player-facing filter.
 import { uid, clone } from './util.js';
+import { combatView } from './combat.js';
 
 export const THEMES = { ironclad: 'Ironclad Inquiries', erta: 'Erta' };
 export const DISPOSITION_COLORS = { hostile: '#c8553d', neutral: '#d6a73c', friendly: '#4f9d69' };
@@ -28,7 +29,7 @@ export function newCharacter(c, o = {}) {
     name: o.name || 'New character', player: o.player || '',
     color, img: o.img || null,
     hp: { value: o.hp ?? 10, max: o.hp ?? 10, temp: 0 },
-    ac: o.ac ?? 10, speed: o.speed || '30 ft', size: o.size || 1,
+    ac: o.ac ?? 10, speed: o.speed || '30 ft', size: o.size || 1, init: o.init ?? 0,
     conditions: [], notes: o.notes || '',
   };
 }
@@ -56,7 +57,7 @@ export function newToken(o = {}) {
     img: o.img || null, color: o.color || null,
     kind: o.charId ? 'pc' : 'npc', charId: o.charId || null,
     hp: o.hp ? { ...o.hp } : { value: 10, max: 10, temp: 0 },
-    ac: o.ac ?? 10,
+    ac: o.ac ?? 10, init: o.init ?? 0, actorId: o.actorId || null,
     conditions: o.conditions ? [...o.conditions] : [],
     disposition: o.disposition || (o.charId ? 'friendly' : 'hostile'),
     hidden: !!o.hidden,
@@ -120,6 +121,7 @@ export function playerView(c, charId, scene, fogged) {
     party, scene: s,
     audio: { music: c.audio.music, ambience: c.audio.ambience },
     handout: c.handout, paused: c.paused,
+    combat: combatView(c.combat, charId),
     settings: { diagonals: c.settings.diagonals },
   };
 }

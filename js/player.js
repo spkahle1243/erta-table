@@ -7,6 +7,8 @@ import { MapView } from './render.js';
 import { AudioEngine } from './audio.js';
 import { viewAssets } from './model.js';
 import { ICONS, popover, closePopover, hpConditionsEditor, conditionChips, renderHandout, avatar } from './ui.js';
+import { roll as rollDice, withAdvantage, DiceOverlay, RollLog } from './dice.js';
+import { renderStrip } from './combat.js';
 
 const P = { client: null, view: null, map: null, audio: null, me: null, entered: false, dismissed: null, handoutEl: null };
 window.__player = P;
@@ -72,6 +74,9 @@ function onMessage(m) {
     case 'ruler': P.map.setRemoteRuler(m.key, m.pts ? { pts: m.pts, color: m.color, name: m.name } : null); return;
     case 'ping': P.map.addPing(m.x, m.y, m.color, !!m.pull); return;
     case 'sfx': P.audio.sfx(m.asset, m.vol); return;
+    case 'roll': showRoll(m.roll); return;
+    case 'rolls': P.log.setAll(m.list); return;
+    case 'turn': if (m.charId && m.charId === P.me?.charId) toast(`Your turn, ${P.me.name}!`, 'ok'); return;
   }
 }
 
@@ -101,6 +106,9 @@ function buildApp() {
       el('div', { class: 'party-strip', id: 'party' }),
       el('div', { class: 'pc-card', id: 'pc' }),
       el('div', { class: 'paused', id: 'paused', hidden: true }, el('span', {}, 'Game paused')),
+      el('div', { class: 'combat-strip', id: 'combat-strip', hidden: true }),
+      el('div', { class: 'init-ask', id: 'init-ask', hidden: true }),
+      el('div', { class: 'dock', id: 'dock' }),
       el('div', { class: 'empty-stage', id: 'empty', hidden: true }))));
   P.map = new MapView(canvas, {
     role: 'player',
@@ -121,6 +129,27 @@ function buildApp() {
   });
   P.map.myColor = '#66C39D';
   buildToolbar();
+  P.dice = new DiceOverlay();
+  const dock = $('#dock');
+  dock.append(el('button', { class: 'dock-h', type: 'button', onclick: () => { dock.classList.toggle('closed'); localStorage.setItem('erta-dock', dock.classList.contains('closed') ? 'closed' : 'open'); } }, el('span', {}, 'Dice & rolls'), el('span', { class: 'chev' }, '▾')));
+  if (localStorage.getItem('erta-dock') === 'closed') dock.classList.add('closed');
+  P.log = new RollLog(dock, { onRoll: (f, o) => myRoll(f, o) });
+}
+
+async function showRoll(r) {
+  await P.dice.show(r, r.by?.color || '#E5916A');
+  P.log.add(r, { mine: r.by?.charId === P.me?.charId });
+}
+
+function myRoll(formula, { mode = null, label = '', purpose = null } = {}) {
+  if (!P.me) return null;
+  let r;
+  try { r = rollDice(withAdvantage(formula, mode || P.log.mode), { label, by: { name: P.me.name, color: P.me.color, charId: P.me.charId } }); }
+  catch (e) { toast(e.message, 'bad'); return null; }
+  if (/d20/.test(formula)) P.log.clearMode();
+  P.client.send({ t: 'roll', roll: r, purpose });
+  showRoll(r);
+  return r;
 }
 
 const dragOut = throttle((id, x, y) => P.client.send({ t: 'drag', id, x, y }), 50);
@@ -173,7 +202,23 @@ async function render() {
     empty.append(el('div', {}, el('h2', {}, 'The table is being set'), el('p', {}, 'Your DM hasn’t shown a scene yet.')));
   }
   $('#paused').hidden = !v.paused;
+  renderCombat();
   renderPc(); renderParty(); renderHandoutView();
+}
+
+function renderCombat() {
+  const c = P.view.combat;
+  renderStrip($('#combat-strip'), c && c.list.length ? c : null, {
+    resolveImg: async id => { await P.client.ensureAsset(id).catch(() => {}); return assets.url(id); },
+    onClick: x => { const t = P.view.scene?.tokens.find(t => t.id === x.tokenId); if (t) { const p = P.map.tokenCenter(t); P.map.centerOn(p.x, p.y); } },
+  });
+  P.map.activeToken = c?.currentToken || null; P.map.dirty = true;
+  const ask = $('#init-ask');
+  if (c?.needInit) {
+    ask.hidden = false; ask.innerHTML = '';
+    const b = c.myBonus;
+    ask.append(el('span', {}, 'Roll for initiative!'), el('button', { class: 'btn primary', type: 'button', onclick: () => { myRoll(`1d20${b >= 0 ? '+' : ''}${b}`, { label: 'Initiative', purpose: 'init' }); ask.hidden = true; } }, `Roll d20${b >= 0 ? '+' : ''}${b}`));
+  } else ask.hidden = true;
 }
 
 function myChar() { return P.view?.party.find(p => p.id === P.me?.charId); }
