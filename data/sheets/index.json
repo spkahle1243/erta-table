@@ -1,0 +1,26 @@
+[
+ {
+  "id": "boon-gultor",
+  "name": "Boon Gultor",
+  "player": "Andy",
+  "series": "ironclad",
+  "file": "boon-gultor.json",
+  "summary": "Artificer (Artillerist) 12"
+ },
+ {
+  "id": "orek-opaldigger",
+  "name": "Orek Opaldigger",
+  "player": "Colin",
+  "series": "ironclad",
+  "file": "orek-opaldigger.json",
+  "summary": "Fighter (Battle Master) 4 / Wizard (Bladesinger) 8"
+ },
+ {
+  "id": "vali",
+  "name": "Vali",
+  "player": "Eddy",
+  "series": "ironclad",
+  "file": "vali.json",
+  "summary": "Paladin (Oath of Vengeance) 8 / Warlock (Fiend Patron) 4"
+ }
+]

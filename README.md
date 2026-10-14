@@ -31,8 +31,23 @@ Your DM tab *is* the game server, the way your Foundry install is. Players' brow
 | F / H | Reveal / hide fog by area (brushes on the toolbar) |
 | Delete | Remove the selected token or template |
 | Arrows | Nudge the selected token one square |
+| T | Target (or un-target) the token under the mouse. T over empty map clears your targets |
+| S | Open or close your character sheet (players) |
+| N | Next turn in combat (DM) |
 
 Mouse wheel zooms; right-drag pans; right-click a token for HP and conditions. Drop an image on the map to add a token (it starts hidden), or on an empty scene to set its background. Drop audio files to add them to the library.
+
+## Character sheets and automation
+
+Characters with a converted sheet (Party tab → **Open sheet**) get full automation. The DM's tab is the referee: it holds every stat block, rolls in the roller's colour so everyone sees the dice, applies the result and posts a card to the log.
+
+- **Attacks:** target with T, then click **Attack** on the sheet (or **Attack ▸** on a monster's stat block). Advantage and disadvantage come from conditions and effects (Vow of Enmity, Sapped, Prone, Restrained, Invisible…), crits double the dice, damage applies resistances, immunities and temporary HP. The **⋯** button holds the riders: Divine Smite (slot spent only on a hit), Shield Bash, maneuvers, True Strike, versatile grip.
+- **Spells:** **Cast** spends the lowest free slot; **⋯** picks a higher slot, a Pact slot, a ritual, a damage type, or Arcane Firearm. Area spells ask you to place the area on the map, then everyone inside saves. Players whose characters are caught get a **Roll** prompt; the DM sees who is still to roll and can **Roll for them**. Damage is rolled once for everyone (2024).
+- **Effects** (Bless, Bane, Hunter's Mark, Bladesong, Haste, Hold Person…) show on tokens, count down at the start of the caster's turn, and end when concentration breaks. Concentration saves happen automatically when a concentrating creature takes damage; Aura of Protection is added to saves in range.
+- **Undo** on any card puts back HP, conditions, effects and spent slots or uses.
+- Players can mark slots and resources, tick prepared spells, roll checks and saves, take rests and make death saves from their sheet. Only the DM edits the sheet itself.
+
+New sheets are built from the PDFs with `tools/build_sheets.py` (sources in `tools/chars/`).
 
 ## If a player can't connect
 
@@ -40,4 +55,4 @@ Most home networks connect fine. A few strict networks (some offices, schools, m
 
 ## Credits
 
-Condition icons: Lorc, Delapouite and contributors, [game-icons.net](https://game-icons.net) (CC BY 3.0). Networking: [PeerJS](https://peerjs.com) (MIT). Backups: [JSZip](https://stuk.github.io/jszip/) (MIT).
+Monster stat blocks and spells: this work includes material from the System Reference Document 5.2 ("SRD 5.2") by Wizards of the Coast LLC, available at https://www.dndbeyond.com/srd and licensed under the Creative Commons Attribution 4.0 International License (https://creativecommons.org/licenses/by/4.0/legalcode). Converted from the data in the [Foundry VTT dnd5e system](https://github.com/foundryvtt/dnd5e). 3D dice: [dice-box-threejs](https://github.com/3d-dice/dice-box-threejs) (MIT). Condition icons: Lorc, Delapouite and contributors, [game-icons.net](https://game-icons.net) (CC BY 3.0). Networking: [PeerJS](https://peerjs.com) (MIT). Backups: [JSZip](https://stuk.github.io/jszip/) (MIT).

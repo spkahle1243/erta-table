@@ -9,8 +9,9 @@ import { viewAssets } from './model.js';
 import { ICONS, popover, closePopover, hpConditionsEditor, conditionChips, renderHandout, avatar } from './ui.js';
 import { roll as rollDice, withAdvantage, DiceOverlay, RollLog } from './dice.js';
 import { renderStrip } from './combat.js';
+import { SheetWindow, AREA_SHAPE, needsTarget } from './sheet.js';
 
-const P = { client: null, view: null, map: null, audio: null, me: null, entered: false, dismissed: null, handoutEl: null };
+const P = { client: null, view: null, map: null, audio: null, me: null, entered: false, dismissed: null, handoutEl: null, targets: [], saves: new Map(), sheet: null };
 window.__player = P;
 
 function parseLink() {
@@ -76,6 +77,16 @@ function onMessage(m) {
     case 'sfx': P.audio.sfx(m.asset, m.vol); return;
     case 'roll': showRoll(m.roll); return;
     case 'rolls': P.log.setAll(m.list); return;
+    case 'card': P.log.add(m.card); return;
+    case 'targets': {
+      P.map.setTargets(new Map(Object.entries(m.map || {})));
+      const mine = Object.entries(m.map || {}).filter(([, cols]) => cols.includes(P.me?.color)).map(([id]) => id);
+      if (mine.length !== P.targets.length) { P.targets = mine; P.sheet?.render(); }
+      return;
+    }
+    case 'save-req': P.saves.set(m.id, m); renderSaves(); return;
+    case 'save-done': P.saves.delete(m.id); renderSaves(); return;
+    case 'notice': toast(m.text); return;
     case 'turn': if (m.charId && m.charId === P.me?.charId) toast(`Your turn, ${P.me.name}!`, 'ok'); return;
   }
 }
@@ -109,13 +120,16 @@ function buildApp() {
       el('div', { class: 'paused', id: 'paused', hidden: true }, el('span', {}, 'Game paused')),
       el('div', { class: 'combat-strip', id: 'combat-strip', hidden: true }),
       el('div', { class: 'init-ask', id: 'init-ask', hidden: true }),
+      el('div', { class: 'save-ask', id: 'save-ask', hidden: true }),
       el('div', { class: 'dock', id: 'dock' }),
       el('div', { class: 'empty-stage', id: 'empty', hidden: true }))));
+  P.sheet = new SheetWindow('player');
   P.map = new MapView(canvas, {
     role: 'player',
     getUrl: async id => { await P.client.ensureAsset(id); return assets.url(id); },
     getDiagonals: () => P.view?.settings?.diagonals || 'equal',
-    canMoveToken: t => !!P.me && t.charId === P.me.charId && !P.view?.paused,
+    canMoveToken: t => !!P.me && (t.charId === P.me.charId || (t.owner && t.owner === P.me.charId)) && !P.view?.paused,
+    onToolChange: id => setTool(id),
     onTokenDrag: (id, x, y, final) => { if (final) P.client.send({ t: 'move', id, x, y }); else dragOut(id, x, y); },
     onRuler: pts => rulerOut(pts),
     onPing: (x, y) => P.client.send({ t: 'ping', x, y }),
@@ -170,7 +184,12 @@ function buildToolbar() {
   }
   tb.append(el('div', { class: 'grp' }, el('button', { class: 'tool', type: 'button', 'aria-label': 'Fit map', html: ICONS.fit + '<span class="tip">Fit map to screen</span>', onclick: () => P.map.fit() })));
   const KEYS = { v: 'select', r: 'ruler', p: 'ping', c: 'tpl:circle', o: 'tpl:cone', l: 'tpl:line', b: 'tpl:cube' };
-  window.addEventListener('keydown', e => { if (e.ctrlKey || e.metaKey || e.altKey || e.target.closest('input, textarea, select')) return; const t = KEYS[e.key.toLowerCase()]; if (t) setTool(t); });
+  window.addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.target.closest('input, textarea, select')) return;
+    if (e.key.toLowerCase() === 't') { toggleTarget(P.map.hover); return; }
+    if (e.key.toLowerCase() === 's' && myChar()?.hasSheet) { P.sheet.isOpen ? P.sheet.close() : openSheet(); return; }
+    const t = KEYS[e.key.toLowerCase()]; if (t) setTool(t);
+  });
 }
 function setTool(id) {
   P.map.setTool(id);
@@ -207,6 +226,56 @@ async function render() {
   for (const k of v.clocks || []) cc.append(el('span', { class: 'clock-chip', title: `${k.name}: ${k.value} of ${k.size}` }, el('span', { class: 'nm' }, k.name), el('span', { class: 'pp' }, Array.from({ length: k.size }, (_, i) => el('i', { class: i < k.value ? 'on' : '' })))));
   renderCombat();
   renderPc(); renderParty(); renderHandoutView();
+  P.sheet?.render();
+}
+
+// ------------------------------------------------------------------ targets, sheet, saves
+function toggleTarget(id) {
+  const s = new Set(P.targets);
+  if (!id) s.clear(); else if (s.has(id)) s.delete(id); else s.add(id);
+  P.targets = [...s];
+  P.client.send({ t: 'targets', ids: P.targets });
+  P.sheet?.render();
+}
+
+function openSheet() {
+  P.sheet.open(() => {
+    const y = P.view?.you, ch = myChar();
+    if (!y?.sheet || !ch) return null;
+    return { ch: { ...ch, acShown: ch.ac }, sheet: y.sheet, state: y.state, effects: y.effects, concentration: y.concentration };
+  }, {
+    key: P.me?.charId,
+    targets: () => P.targets,
+    use: (entry, req) => {
+      if (P.view?.paused) { toast('The game is paused'); return; }
+      const area = entry.area || entry.auto?.[req.opts?.activity || 0]?.area;
+      const shape = AREA_SHAPE(area);
+      const send = r => P.client.send({ t: 'use', req: { ...r, targets: P.targets } });
+      if (shape && area.size) {
+        setTool('tpl:' + shape);
+        P.map.myColor = P.me.color;
+        P.sheet.stepAside(true);
+        P.map.placeArea({ shape, len: Number(area.size) || 5 }, tpl => { P.sheet.stepAside(false); if (tpl) send({ ...req, template: tpl }); });
+        toast(`Place the ${area.size}-ft ${shape}: click, or drag to aim. Esc cancels.`);
+        return;
+      }
+      if (!P.targets.length && needsTarget(entry, req.opts?.activity || 0)) { toast('Target a creature first: hover its token and press T', 'bad'); return; }
+      send(req);
+    },
+    check: (kind, key, mode) => P.client.send({ t: 'check', kind, key, mode }),
+    rest: kind => P.client.send({ t: 'rest', kind }),
+    deathSave: () => P.client.send({ t: 'death' }),
+    endConc: () => P.client.send({ t: 'end-conc' }),
+    setState: patch => P.client.send({ t: 'sheet-state', patch }),
+  });
+}
+
+function renderSaves() {
+  const box = $('#save-ask'); if (!box) return;
+  box.innerHTML = '';
+  box.hidden = !P.saves.size;
+  for (const [id, q] of P.saves) box.append(el('div', { class: 'row' }, el('span', { class: 'grow' }, q.label),
+    el('button', { class: 'btn primary', type: 'button', onclick: () => { P.client.send({ t: 'save-roll', id }); P.saves.delete(id); renderSaves(); } }, `Roll ${q.formula.replace(/^1d20/, 'd20').replace(/^2d20kh/, 'd20 (adv) ').replace(/^2d20kl/, 'd20 (dis) ')}`)));
 }
 
 function renderCombat() {
@@ -237,6 +306,7 @@ function renderPc() {
   const data = { hp: { ...ch.hp }, conditions: [...ch.conditions] };
   box.append(
     el('div', { class: 'row' }, el('div', { class: 'nm grow' }, ch.name),
+      ch.hasSheet ? el('button', { class: 'btn small primary', type: 'button', title: 'Your character sheet (S)', onclick: () => (P.sheet.isOpen ? P.sheet.close() : openSheet()) }, 'Sheet') : null,
       el('div', { class: 'stats' }, el('span', { class: 'chip' }, 'AC ' + ch.ac), ch.speed ? el('span', { class: 'chip' }, ch.speed) : null)),
     el('div', { class: 'hp-big' }, el('b', {}, ch.hp.value), el('span', { class: 'muted' }, '/ ' + ch.hp.max), ch.hp.temp ? el('span', { style: { color: '#7fb7d9' } }, `+${ch.hp.temp} temp`) : null,
       el('span', { class: 'bar', style: { marginLeft: '8px' } }, el('i', { style: { width: f * 100 + '%', background: f > .5 ? '#4f9d69' : f > .25 ? '#d6a73c' : '#c8553d' } }))),

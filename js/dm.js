@@ -13,6 +13,8 @@ import { roll as rollDice, withAdvantage, DiceOverlay, RollLog } from './dice.js
 import { newCombat, combatant, sortCombat, current as currentCombatant, advance, combatView, renderStrip } from './combat.js';
 import { loadBestiary, searchBestiary, renderStatBlock } from './statblock.js';
 import { importPack, paneprep, actorModal, encounterTokens, clockWidget } from './prep.js';
+import { Engine, actorFor, sheetNumbers } from './rules.js';
+import { SheetWindow, AREA_SHAPE, needsTarget } from './sheet.js';
 
 const DM_COLOR = '#E5916A';
 
@@ -20,8 +22,10 @@ const S = {
   camp: null, viewId: null, host: null, view: null, audio: null,
   selection: [], tab: 'scene', activeFog: new FogMask(), panelDirty: false,
   dice: null, log: null, prepSection: null, prepFollow: true,
+  engine: null, targets: {}, pending: new Map(), sheetWin: null, engScene: null,
 };
 window.__dm = S; // handy for debugging from the console
+queueMicrotask(() => { S.change = (fn, o) => change(fn, o); });
 
 // ======================================================================= home
 
@@ -83,8 +87,11 @@ async function openCampaign(id) {
   S.viewId = c.activeSceneId || c.scenes[0]?.id || null;
   persistStorage();
   history.replaceState(null, '', location.pathname + location.search + '#c=' + c.id);
+  S.targets = {}; S.pending.clear();
   buildApp();
+  makeEngine();
   startHost();
+  autoAttachSheets();
   S.audio = new AudioEngine(id => assets.url(id));
   const vols = await kv.get('dm-volumes'); if (vols) Object.assign(S.audio.vol, vols);
   const unlock = () => { S.audio.unlock(); syncAudio(); window.removeEventListener('pointerdown', unlock, true); window.removeEventListener('keydown', unlock, true); };
@@ -102,7 +109,7 @@ function migrate(c) {
   c.clocks ||= [];
   c.actors ||= {};
   if (c.combat === undefined) c.combat = null;
-  for (const ch of c.characters) ch.init ??= 0;
+  for (const ch of c.characters) { ch.init ??= 0; ch.effects ||= []; ch.state ||= {}; }
   for (const s of c.scenes) { s.templates ||= []; s.fog ||= { on: true, ops: [] }; s.kind ||= 'map'; for (const t of s.tokens) t.init ??= 0; }
 }
 
@@ -125,6 +132,7 @@ function change(fn, { panel = true, rail = false } = {}) {
   refreshMap();
   if (rail) renderRail(); else railSoon();
   if (panel) renderPanel();
+  S.sheetWin?.render();
 }
 const railSoon = debounce(() => renderRail(), 300);
 
@@ -143,7 +151,8 @@ function startHost() {
   host.on('join', (pid, info) => {
     toast(`${info.name} joined`, 'ok');
     host.send(pid, { t: 'welcome', view: viewFor(info.charId) });
-    host.send(pid, { t: 'rolls', list: S.camp.rolls.filter(r => !r.hidden).slice(-40) });
+    host.send(pid, { t: 'rolls', list: S.camp.rolls.filter(r => !r.hidden).slice(-40).map(publicCard) });
+    host.send(pid, { t: 'targets', map: targetMap() });
   });
   host.on('leave', (pid, info) => toast(`${info.name} left`));
   host.on('message', onPlayerMessage);
@@ -166,7 +175,7 @@ const pushState = throttle(() => {
 
 function onPlayerMessage(pid, m, info) {
   const c = S.camp, sc = activeScene();
-  const ownsToken = id => sc?.tokens.find(t => t.id === id && t.charId && t.charId === info.charId);
+  const ownsToken = id => sc?.tokens.find(t => t.id === id && ((t.charId && t.charId === info.charId) || (t.owner && t.owner === info.charId)));
   switch (m.t) {
     case 'drag': {
       if (c.paused || !ownsToken(m.id)) return;
@@ -222,6 +231,9 @@ function onPlayerMessage(pid, m, info) {
       }
       return;
     }
+    case 'use': case 'check': case 'death': case 'rest': case 'sheet-state': case 'end-conc': case 'save-roll': case 'targets':
+      onRulesMessage(pid, m, info);
+      return;
     case 'pc': {
       const ch = c.characters.find(x => x.id === info.charId);
       if (!ch) return;
@@ -358,6 +370,7 @@ function buildApp() {
     onSelect: ids => { S.selection = ids; if (ids.length && S.tab === 'scene') { S.tab = 'tokens'; renderTabs(); } if (S.tab === 'tokens') renderPanel(true); },
     onTokenContext: (id, x, y) => tokenHud(id, x, y),
     onTokenDblClick: id => { S.selection = [id]; S.tab = 'tokens'; renderTabs(); renderPanel(); },
+    onToolChange: id => setTool(id),
     onTokenDelete: ids => change(() => { const sc = scene(); sc.tokens = sc.tokens.filter(t => !ids.includes(t.id)); S.selection = []; }),
     onDropFiles: dropFiles,
     onDropData: (charId, wx, wy) => placePc(charId, wx, wy),
@@ -368,7 +381,9 @@ function buildApp() {
   const head = el('button', { class: 'dock-h', type: 'button', onclick: () => { dock.classList.toggle('closed'); localStorage.setItem('erta-dock', dock.classList.contains('closed') ? 'closed' : 'open'); } }, el('span', {}, 'Dice & rolls'), el('span', { class: 'chev' }, '▾'));
   dock.append(head);
   if (localStorage.getItem('erta-dock') === 'closed') dock.classList.add('closed');
-  S.log = new RollLog(dock, { canHide: true, onRoll: (f, o) => dmRoll(f, o) });
+  S.log = new RollLog(dock, { canHide: true, onRoll: (f, o) => dmRoll(f, o), onUndo: cd => undoCard(cd) });
+  S.log.el.prepend(el("div", { class: "pending", id: "pending", hidden: true }));
+  S.sheetWin = new SheetWindow('dm');
   S.log.setAll(S.camp.rolls.slice(-60));
 }
 
@@ -436,6 +451,7 @@ function buildToolbar() {
   window.addEventListener('keydown', e => {
     if (!S.camp || e.ctrlKey || e.metaKey || e.altKey || e.target.closest('input, textarea, select')) return;
     if (e.key.toLowerCase() === 'n' && S.camp.combat) { nextTurn(); return; }
+    if (e.key.toLowerCase() === 't') { toggleTarget('dm', S.view.hover, e.shiftKey); return; }
     const t = KEYS[e.key.toLowerCase()]; if (t) setTool(t);
   });
 }
@@ -533,7 +549,7 @@ function focusToken(tokenId) {
 function dmSceneView(sc) {
   return {
     ...sc,
-    tokens: sc.tokens.map(t => { const st = tokenStats(S.camp, t); return { ...t, name: st.name, hp: st.hp, ac: st.ac, conditions: st.conditions, color: st.color, img: st.img, size: st.size || t.size }; }),
+    tokens: sc.tokens.map(t => { const st = tokenStats(S.camp, t); return { ...t, name: st.name, hp: st.hp, ac: st.ac, conditions: st.icons, color: st.color, img: st.img, size: st.size || t.size }; }),
   };
 }
 
@@ -842,7 +858,8 @@ function tokenEditor(sc, t) {
   } else box.append(el('p', { class: 'small muted' }, 'Party token: HP, AC and conditions come from the character (Party tab), and the player can change HP and conditions too.'));
   box.append(hpConditionsEditor(data, patch => change(() => Object.assign(target, patch), { panel: false }), { showMax: !ch }));
   const actor = t.actorId && S.camp.actors[t.actorId];
-  if (actor) box.append(el('details', { open: true }, el('summary', { class: 'small' }, 'Stat block'), renderStatBlock(actor, { onRoll: (f, label) => dmRoll(f, { label: label.replace(actor.name, st.name) }) })));
+  if (actor) box.append(el('details', { open: true }, el('summary', { class: 'small' }, 'Stat block'), renderStatBlock(actor, { onRoll: (f, label) => dmRoll(f, { label: label.replace(actor.name, st.name) }), onUse: (entry, i) => npcUse(sc, t, entry, i) })));
+  if (ch?.sheet) box.append(el('button', { class: 'btn small', type: 'button', onclick: () => openSheet(ch.id) }, 'Open character sheet'));
   box.append(el('div', { class: 'row' },
     el('button', { class: 'btn small', type: 'button', onclick: () => { const copy = { ...clone(t), id: uid(10), x: t.x + t.size }; if (!copy.charId) { copy.name = nextName(sc, t.name); change(() => sc.tokens.push(copy)); } } }, 'Duplicate'),
     el('button', { class: 'btn small', type: 'button', onclick: () => { const c = S.view.tokenCenter(t); S.view.centerOn(c.x, c.y); } }, 'Find on map'),
@@ -947,7 +964,7 @@ function paneCombat() {
       el('button', { class: 'btn small', type: 'button', onclick: () => rollNpcInit(false) }, 'Roll monsters'),
       el('button', { class: 'btn small' + (c.askInit ? ' copper' : ''), type: 'button', onclick: () => change(() => { c.askInit = !c.askInit; }) }, c.askInit ? 'Waiting on players…' : 'Ask players to roll'),
       el('button', { class: 'btn small', type: 'button', onclick: () => { const sc = scene(); const have = new Set(c.list.map(x => x.tokenId)); const add = sc.tokens.filter(t => S.selection.includes(t.id) && !have.has(t.id)); if (!add.length) return toast('Select tokens not already in the fight'); change(() => { c.list.push(...add.map(t => tokenCombatant(sc, t))); sortCombat(c); }); } }, '+ Selected')),
-    missing.length ? el('p', { class: 'small', style: { color: 'var(--copper)' } }, `Waiting on initiative: ${missing.map(x => x.name).join(', ')}`) : null,
+    missing.length ? el('p', { class: 'small', style: { color: 'var(--copper)' } }, `Waiting on initiative: ${missing.map(x => x.name).join(', ')}`) : '',
   );
   const list = el('div', { class: 'list' });
   c.list.forEach((x, i) => {
@@ -980,6 +997,12 @@ function nextTurn() {
   if (!c.started && c.list.some(x => x.init == null)) { toast('Some combatants have no initiative yet', 'bad'); }
   change(() => { sortCombat(c); advance(c, 1); });
   const cur = currentCombatant(c);
+  if (cur && S.engine) {
+    S.engScene = S.camp.scenes.find(x => x.id === c.sceneId) || activeScene() || scene();
+    const lines = S.engine.onTurnStart(cur.charId ? 'c:' + cur.charId : 't:' + cur.tokenId);
+    if (lines.length) postCard({ id: uid(10), ts: Date.now(), by: { name: 'DM', color: DM_COLOR }, title: `Round ${c.round}: ${cur.name}`, lines: lines.map(t => ({ t, c: 'muted' })), undo: [] });
+    change(() => {}, { panel: S.tab === 'combat' });
+  }
   if (cur && !cur.hidden) {
     S.host.broadcast({ t: 'turn', id: cur.id, charId: cur.charId, name: cur.name, round: c.round });
     if (cur.tokenId && viewingActive()) { const t = scene()?.tokens.find(t => t.id === cur.tokenId); if (t) { const p = S.view.tokenCenter(t); S.view.addPing(p.x, p.y, '#E5916A'); } }
@@ -1026,6 +1049,7 @@ function paneParty() {
       head,
       el('div', { class: 'hpline' }, el('span', { class: 'lbl' }, 'HP'), `${ch.hp.value}/${ch.hp.max}${ch.hp.temp ? ' +' + ch.hp.temp : ''}`, el('span', { class: 'lbl', style: { marginLeft: '8px' } }, 'AC'), String(ch.ac)),
       ch.conditions.length ? conditionChips(ch.conditions) : null,
+      sheetControls(ch),
       el('div', { class: 'linkbox' }, link, el('button', { class: 'btn icon', type: 'button', title: 'Copy link', html: ICONS.copy, onclick: async () => { if (await copyText(link.value)) toast(`Copied ${ch.name}'s link`, 'ok'); } })),
       det));
   }
@@ -1204,3 +1228,282 @@ async function boot() {
   else renderHome();
 }
 boot();
+
+
+// ======================================================================= rules engine glue
+
+function makeEngine() {
+  S.engine = new Engine({
+    camp: () => S.camp,
+    scene: () => S.engScene || activeScene() || scene(),
+    roll: async (formula, { label, by, hidden } = {}) => engineRoll(formula, label, by, hidden),
+    card: cd => postCard(cd),
+    save: () => change(() => {}, { panel: ['tokens', 'party', 'combat'].includes(S.tab) }),
+    askSave: (charId, req) => sendToChar(charId, { t: 'save-req', ...req }),
+    waiting: (id, name, label) => { S.pending.set(id, { name, label }); renderPending(); },
+    onlineChars: () => new Set([...(S.host?.clients.values() || [])].map(c => c.info.charId)),
+    summon: (A, key) => summon(A, key),
+  });
+  // resolving a pending save also clears the prompt
+  const orig = S.engine.resolvePendingSave.bind(S.engine);
+  S.engine.resolvePendingSave = async id => {
+    const p = S.engine.pending.get(id);
+    if (!p) return;
+    S.pending.delete(id); renderPending();
+    if (p.T.kind === 'pc') sendToChar(p.T.char.id, { t: 'save-done', id });
+    return orig(id);
+  };
+  fetch('data/srd-spells-2024.json').then(r => r.json()).then(d => { S.engine.spells = d; }).catch(() => {});
+}
+
+function engineRoll(formula, label, by, hidden = false) {
+  const r = rollDice(formula, { label, hidden: !!hidden, by: by || { name: 'DM', color: DM_COLOR } });
+  recordRoll(r);
+  if (!hidden) S.host?.broadcast({ t: 'roll', roll: r });
+  showRoll(r);
+  return r;
+}
+
+function publicCard(x) {
+  if (x.kind !== 'card') return x;
+  const { undo, ...rest } = x;
+  return rest;
+}
+
+function postCard(cd) {
+  cd.kind = 'card';
+  recordRoll(cd);
+  S.host?.broadcast({ t: 'card', card: publicCard(cd) });
+  S.log?.add(cd);
+}
+
+function undoCard(cd) {
+  const real = S.camp.rolls.find(x => x.id === cd.id) || cd;
+  S.engine.undo(real);
+  S.log.add(real);
+  S.host?.broadcast({ t: 'card', card: publicCard(real) });
+  change(() => {});
+  toast('Undone', 'ok');
+}
+
+function sendToChar(charId, msg) {
+  for (const [pid, c] of S.host?.clients || []) if (c.info.charId === charId) S.host.send(pid, msg);
+}
+
+function renderPending() {
+  const box = $('#pending'); if (!box) return;
+  box.innerHTML = '';
+  box.hidden = !S.pending.size;
+  for (const [id, p] of S.pending) box.append(el('div', { class: 'pend' }, el('span', { class: 'grow' }, `Waiting on ${p.name}: ${p.label}`),
+    el('button', { class: 'btn small', type: 'button', onclick: () => S.engine.resolvePendingSave(id) }, 'Roll for them')));
+}
+
+// ---- targets
+function targetMap() {
+  const m = {};
+  for (const [who, ids] of Object.entries(S.targets)) {
+    const color = who === 'dm' ? DM_COLOR : S.camp.characters.find(c => c.id === who)?.color || '#888';
+    for (const id of ids) (m[id] ||= []).push(color);
+  }
+  return m;
+}
+function pushTargets() {
+  const m = targetMap();
+  S.view?.setTargets(new Map(Object.entries(m)));
+  S.host?.broadcast({ t: 'targets', map: m });
+  S.sheetWin?.render();
+}
+function toggleTarget(who, tokenId, add) {
+  const cur = new Set(S.targets[who] || []);
+  if (!tokenId) { if (cur.size) { S.targets[who] = []; pushTargets(); } return; }
+  if (cur.has(tokenId)) cur.delete(tokenId); else cur.add(tokenId);
+  S.targets[who] = [...cur];
+  pushTargets();
+}
+function validTargets(ids, sc) { return (ids || []).filter(id => sc?.tokens.some(t => t.id === id)); }
+
+// ---- sheets
+async function sheetIndex() {
+  if (!S.sheetIdx) S.sheetIdx = fetch('data/sheets/index.json').then(r => r.json()).catch(() => []);
+  return S.sheetIdx;
+}
+async function fetchSheet(file) { return (await fetch('data/sheets/' + file)).json(); }
+
+function applySheet(ch, sheet) {
+  ch.sheet = sheet;
+  ch.ac = sheet.ac; ch.speed = sheet.speed; ch.size = sheet.size || 1;
+  ch.init = sheetNumbers(sheet).init;
+  const same = ch.hp.max === sheet.hp;
+  ch.hp = { value: same ? ch.hp.value : sheet.hp, max: sheet.hp, temp: ch.hp.temp || 0 };
+  ch.state ||= {}; ch.effects ||= [];
+  for (const x of S.camp.combat?.list || []) if (x.charId === ch.id) x.bonus = ch.init;
+}
+
+async function autoAttachSheets() {
+  const idx = await sheetIndex();
+  const todo = S.camp.characters.filter(ch => !ch.sheet && !ch.sheetDeclined).map(ch => [ch, idx.find(x => x.series === S.camp.theme && x.name.toLowerCase() === ch.name.toLowerCase())]).filter(([, x]) => x);
+  if (!todo.length) return;
+  const sheets = await Promise.all(todo.map(([, x]) => fetchSheet(x.file)));
+  change(() => todo.forEach(([ch], i) => applySheet(ch, sheets[i])));
+  toast(`Character sheets ready for ${todo.map(([ch]) => ch.name).join(', ')}`, 'ok');
+}
+
+function sheetControls(ch) {
+  const row = el('div', { class: 'row' });
+  if (ch.sheet) {
+    const n = sheetNumbers(ch.sheet);
+    row.append(el('button', { class: 'btn small primary', type: 'button', onclick: () => openSheet(ch.id) }, 'Open sheet'),
+      el('span', { class: 'small muted grow' }, `${ch.sheet.classes.map(c => c.name + ' ' + c.level).join(' / ')}${n.spellDC ? ' · DC ' + n.spellDC : ''}`),
+      el('button', { class: 'btn small ghost', type: 'button', title: 'Load a different sheet', onclick: () => loadSheetDialog(ch) }, 'Change'));
+  } else row.append(el('button', { class: 'btn small', type: 'button', onclick: () => loadSheetDialog(ch) }, 'Add character sheet…'));
+  return row;
+}
+
+async function loadSheetDialog(ch) {
+  const idx = await sheetIndex();
+  const sel = el('select', {}, el('option', { value: '' }, 'Choose…'), idx.map(x => el('option', { value: x.file, selected: x.name === ch.name }, `${x.name} (${x.summary})`)));
+  let fromFile = null;
+  const fl = el('span', { class: 'small muted' }, '');
+  modal({ title: `Character sheet for ${ch.name}`, body: el('div', { class: 'stack' },
+    el('p', { class: 'small muted' }, 'Sheets converted from your players’ PDFs live with the table. Loading one sets AC, HP, speed and initiative, and gives the player a full sheet with automated attacks and spells.'),
+    el('label', { class: 'field' }, el('span', {}, 'Converted sheets'), sel),
+    el('div', { class: 'row' }, el('button', { class: 'btn small', type: 'button', onclick: async () => { const [f] = await pickFiles({ accept: '.json,application/json' }); if (f) { try { fromFile = JSON.parse(await f.text()); fl.textContent = f.name; } catch { toast('That isn’t a sheet file', 'bad'); } } } }, 'Or load a sheet file…'), fl),
+    ch.sheet ? el('button', { class: 'btn small danger', type: 'button', onclick: () => { change(() => { ch.sheet = null; ch.sheetDeclined = true; }); closeModals(); } }, 'Remove the sheet') : null),
+  actions: [{ label: 'Cancel' }, { label: 'Load', kind: 'primary', run: async () => {
+    const sh = fromFile || (sel.value ? await fetchSheet(sel.value) : null);
+    if (!sh?.abilities) { toast('Pick a sheet first', 'bad'); return false; }
+    change(() => applySheet(ch, sh));
+    toast(`${ch.name}: sheet loaded`, 'ok');
+  } }] });
+}
+function closeModals() { document.querySelectorAll('.modal-back').forEach(b => b.remove()); }
+
+function pcView(ch) {
+  return { ch: { ...ch, acShown: actorAc(ch) }, sheet: ch.sheet, state: ch.state, effects: ch.effects, concentration: ch.concentration };
+}
+function actorAc(ch) { let ac = ch.ac; for (const e of ch.effects || []) ac += Number(e.mods?.acBonus) || 0; return ac; }
+
+function pcToken(charId, sc = activeScene()) { return sc?.tokens.find(t => t.charId === charId) || scene()?.tokens.find(t => t.charId === charId) || null; }
+
+function openSheet(charId) {
+  const ch = S.camp.characters.find(c => c.id === charId);
+  if (!ch?.sheet) return;
+  S.sheetWin.open(() => { const c = S.camp.characters.find(x => x.id === charId); return c?.sheet ? pcView(c) : null; }, {
+    key: charId, isDM: true,
+    targets: () => S.targets.dm || [],
+    use: (entry, req) => { if (!(S.targets.dm || []).length && needsTarget(entry, req.opts?.activity || 0)) { toast('Target a creature first: hover its token and press T', 'bad'); return; } clientUse(entry, req, r => runUse(charId, r, S.targets.dm), DM_COLOR); },
+    check: (kind, key, mode) => runCheck(charId, kind, key, mode),
+    rest: kind => runRest(charId, kind),
+    deathSave: () => runDeath(charId),
+    endConc: () => runEndConc(charId),
+    setState: patch => change(() => mergeState(ch, patch)),
+  });
+}
+
+// Area spells: place the template first, then resolve.
+function clientUse(entry, req, send, color) {
+  const area = entry.area || entry.auto?.[req.opts?.activity || 0]?.area;
+  const shape = AREA_SHAPE(area);
+  if (shape && area.size) {
+    setTool('tpl:' + shape);
+    S.view.myColor = color;
+    S.sheetWin.stepAside(true);
+    S.view.placeArea({ shape, len: Number(area.size) || 5 }, tpl => { S.sheetWin.stepAside(false); if (tpl) send({ ...req, template: tpl }); else toast('Cancelled'); });
+    toast(`Place the ${area.size}-ft ${shape}: click, or drag to aim. Esc cancels.`);
+    return;
+  }
+  send(req);
+}
+
+async function runUse(charId, req, targets) {
+  const sc = activeScene()?.tokens.some(t => t.charId === charId) ? activeScene() : scene();
+  const t = sc?.tokens.find(t => t.charId === charId);
+  if (!t) { toast('Put that character’s token on the map first', 'bad'); return false; }
+  S.engScene = sc;
+  if (req.template) sc.templates.push({ ...sanitizeTpl(req.template), id: uid(8), owner: charId, color: S.camp.characters.find(c => c.id === charId)?.color || DM_COLOR });
+  await S.engine.use(t, { ...req, targets: validTargets(targets, sc) });
+  return true;
+}
+
+async function npcUse(sc, t, entry, i) {
+  const act = entry.auto?.[i];
+  const run = async req => { S.engScene = sc; if (req.template) change(() => sc.templates.push({ ...sanitizeTpl(req.template), id: uid(8), owner: 'dm', color: DM_COLOR }), { panel: false }); await S.engine.use(t, { src: 'npc', id: entry.name, targets: validTargets(S.targets.dm, sc), template: req.template, opts: { activity: i } }); };
+  if (!(S.targets.dm || []).length && needsTarget({ auto: entry.auto }, i)) { toast('Target someone first: hover their token and press T', 'bad'); return; }
+  clientUse({ auto: entry.auto }, { opts: { activity: i } }, run, DM_COLOR);
+}
+
+async function runCheck(charId, kind, key, mode) {
+  const ch = S.camp.characters.find(c => c.id === charId); if (!ch?.sheet) return;
+  const sc = activeScene() || scene(); S.engScene = sc;
+  const A = actorFor(S.camp, sc, pcToken(charId, sc) || { charId, x: -99, y: -99 });
+  const r = await S.engine.rollCheck(A, kind, key, mode);
+  if (kind === 'init' && S.camp.combat) {
+    const e = S.camp.combat.list.find(x => x.charId === charId);
+    if (e) change(() => { e.init = r.total; sortCombat(S.camp.combat); if (S.camp.combat.list.every(x => x.init != null)) S.camp.combat.askInit = false; }, { panel: S.tab === 'combat' });
+  }
+}
+async function runDeath(charId) { const sc = activeScene() || scene(); S.engScene = sc; const A = actorFor(S.camp, sc, pcToken(charId, sc) || { charId }); await S.engine.deathSave(A); }
+function runRest(charId, kind) {
+  const ch = S.camp.characters.find(c => c.id === charId); if (!ch) return;
+  let got;
+  change(() => { got = S.engine.rest(ch, kind); });
+  postCard({ id: uid(10), ts: Date.now(), by: { name: ch.name, color: ch.color, charId }, title: `${ch.name}: ${kind === 'long' ? 'Long' : 'Short'} rest`, lines: [{ t: got.length ? 'Recovered: ' + got.join(', ') : 'Nothing to recover' }, ...(kind === 'long' ? [{ t: 'HP restored to full', c: 'heal' }] : [{ t: 'Spend Hit Dice from the dice tray and add the HP in the party panel.', c: 'muted' }])], undo: [] });
+}
+function runEndConc(charId) {
+  const sc = activeScene() || scene(); S.engScene = sc;
+  const A = actorFor(S.camp, sc, pcToken(charId, sc) || { charId });
+  const card = { id: uid(10), ts: Date.now(), by: { name: A.name, color: A.color, charId }, title: `${A.name}: ends concentration`, lines: [], undo: [] };
+  S.engine.endConcentration(A, card);
+  postCard(card);
+  change(() => {});
+}
+function mergeState(ch, p) {
+  const sh = ch.sheet; if (!sh) return;
+  const st = (ch.state ||= {});
+  if (p.used && typeof p.used === 'object') { st.used ||= {}; for (const [k, v] of Object.entries(p.used)) { const r = sh.resources.find(x => x.id === k); if (r) st.used[k] = clampInt(v, 0, r.max); } }
+  if (p.slots && typeof p.slots === 'object') { st.slots ||= {}; for (const [k, v] of Object.entries(p.slots)) { const max = sh.spellcasting?.slots?.[Number(k) - 1]; if (max != null) st.slots[k] = clampInt(v, 0, max); } }
+  if (p.pact != null && sh.spellcasting?.pact) st.pact = clampInt(p.pact, 0, sh.spellcasting.pact.max);
+  if (p.prep && typeof p.prep === 'object') { st.prep ||= {}; for (const [k, v] of Object.entries(p.prep)) if (sh.spells.some(x => x.id === k)) st.prep[k] = !!v; }
+}
+
+function summon(A, key) {
+  const spec = A.sheet?.summons?.[key]; if (!spec) return;
+  const sc = S.engScene || activeScene(); if (!sc || !A.token) return;
+  const actorId = `sum:${A.char.id}:${key}`;
+  S.camp.actors[actorId] = spec;
+  sc.tokens = sc.tokens.filter(t => t.actorId !== actorId);
+  const tok = newToken({ name: spec.name, actorId, hp: { value: spec.hp.max, max: spec.hp.max, temp: 0 }, ac: spec.ac, size: Math.max(1, Math.round(spec.squares || 1)), disposition: 'friendly', x: A.token.x + (A.token.size || 1), y: A.token.y });
+  tok.owner = A.char.id; tok.color = A.char.color;
+  sc.tokens.push(tok);
+  const c = S.camp.combat;
+  if (c && c.sceneId === sc.id) { const i = c.list.findIndex(x => x.charId === A.char.id); const cb = tokenCombatant(sc, tok); cb.init = c.list[i]?.init ?? null; c.list.splice(i + 1, 0, cb); }
+}
+
+function onRulesMessage(pid, m, info) {
+  const c = S.camp, sc = activeScene();
+  const ch = c.characters.find(x => x.id === info.charId);
+  if (!ch) return;
+  switch (m.t) {
+    case 'targets': {
+      S.targets[ch.id] = validTargets(Array.isArray(m.ids) ? m.ids.slice(0, 20).map(String) : [], sc);
+      pushTargets(); return;
+    }
+    case 'use': {
+      if (!ch.sheet || c.paused) return;
+      const q = m.req || {};
+      const req = { src: q.src === 'spell' ? 'spell' : 'action', id: String(q.id || ''), slot: clampInt(q.slot, 0, 9), pact: !!q.pact, opts: typeof q.opts === 'object' && q.opts ? q.opts : {}, template: q.template ? sanitizeTpl(q.template) : null };
+      runUse(ch.id, req, Array.isArray(q.targets) ? q.targets.map(String) : S.targets[ch.id]).then(ok => { if (!ok) S.host.send(pid, { t: 'notice', text: 'Your token isn’t on the map yet, so the DM has to place it first.' }); });
+      return;
+    }
+    case 'check': if (ch.sheet) runCheck(ch.id, ['save', 'ability', 'skill', 'init'].includes(m.kind) ? m.kind : 'ability', m.key ? String(m.key) : null, m.mode === 'adv' || m.mode === 'dis' ? m.mode : null); return;
+    case 'death': runDeath(ch.id); return;
+    case 'rest': runRest(ch.id, m.kind === 'long' ? 'long' : 'short'); return;
+    case 'end-conc': runEndConc(ch.id); return;
+    case 'sheet-state': change(() => mergeState(ch, m.patch || {}), { panel: false }); return;
+    case 'save-roll': {
+      const p = S.engine.pending.get(m.id);
+      if (p && p.T.kind === 'pc' && p.T.char.id === ch.id) S.engine.resolvePendingSave(m.id);
+      return;
+    }
+  }
+}

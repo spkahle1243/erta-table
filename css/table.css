@@ -339,3 +339,89 @@ span.clock-chip { cursor: default; }
 .prep-doc .pack-bar .btn { color: var(--ink); font-family: var(--sans); }
 .prep-doc .pack-bar .btn.primary { color: #0d1a15; background: var(--jade); }
 #toasts { bottom: auto; top: 56px; }
+
+/* ---------- rules cards, pending saves */
+.roll.card .card-t { font-family: var(--display); font-size: 16px; line-height: 1.2; }
+.roll.card .card-l { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; font-size: 12.5px; }
+.roll.card .card-l li { padding-left: 10px; position: relative; }
+.roll.card .card-l li::before { content: ''; position: absolute; left: 0; top: .6em; width: 4px; height: 4px; border-radius: 2px; background: var(--muted); }
+.roll.card .c-hit { color: var(--ink); } .roll.card .c-hit::before { background: var(--copper) !important; }
+.roll.card .c-crit { color: #F2D27A; font-weight: 600; } .roll.card .c-crit::before { background: #F2D27A !important; }
+.roll.card .c-miss { color: var(--muted); }
+.roll.card .c-dmg { color: #f0a08f; } .roll.card .c-dmg::before { background: var(--danger) !important; }
+.roll.card .c-heal { color: var(--jade); } .roll.card .c-heal::before { background: var(--jade) !important; }
+.roll.card .c-bad { color: var(--danger); }
+.roll.card .c-muted { color: var(--muted); font-size: 12px; }
+.roll.card.undone { opacity: .5; } .roll.card.undone .card-l { text-decoration: line-through; }
+.roll.card .card-a { display: flex; justify-content: flex-end; }
+.pending { display: grid; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--copper-tint); }
+.pending .pend { display: flex; gap: 8px; align-items: center; font-size: 12.5px; }
+.save-ask { position: absolute; left: 50%; top: 64px; transform: translateX(-50%); z-index: 6; background: rgba(24,32,34,.97); border: 1px solid var(--copper-line); border-radius: 10px; padding: 10px 14px; display: grid; gap: 8px; min-width: 300px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+
+/* ---------- character sheet */
+.sheet-win { position: fixed; z-index: 20; top: calc(var(--bar) + 10px); bottom: 12px; width: 420px; max-width: calc(100vw - 16px);
+  background: var(--surface); border: 1px solid var(--line); border-top: 4px solid var(--pc, var(--jade)); border-radius: 10px; box-shadow: 0 20px 50px rgba(0,0,0,.55); display: flex; flex-direction: column; overflow: hidden; }
+.sheet-win.dm { right: calc(var(--panel) + 324px); }
+@media (max-width: 1250px) { .sheet-win.dm { right: calc(var(--panel) + 12px); } }
+.sheet-win.player { left: 12px; }
+.sheet-x { position: absolute; right: 6px; top: 6px; font-size: 20px; z-index: 2; }
+.sheet { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.sh-head { padding: 12px 14px 8px; display: grid; gap: 8px; border-bottom: 1px solid var(--line); }
+.sh-name { font-family: var(--display); font-size: 26px; line-height: 1.05; padding-right: 30px; color: var(--ink); }
+.sh-sub { font-size: 12px; color: var(--muted); }
+.sh-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.sh-stats .st { display: grid; gap: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); text-align: left; }
+.sh-stats button.st { cursor: pointer; } .sh-stats button.st:hover { border-color: var(--jade-line); }
+.sh-stats .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.sh-stats b { font-family: var(--mono); font-weight: 500; font-size: 14px; }
+.sh-mode { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.sh-fx { display: flex; gap: 4px; flex-wrap: wrap; }
+.sh-fx .chip.conc { color: var(--jade); border-color: var(--jade-line); }
+.sh-fx .x { border: 0; background: none; cursor: pointer; color: var(--muted); padding: 0 0 0 4px; }
+.sh-death { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 6px 8px; border: 1px solid #5a2a24; background: #2a1715; border-radius: 6px; font-size: 12.5px; }
+.sh-death .pp { display: inline-flex; gap: 3px; vertical-align: middle; } .sh-death .pp i { width: 10px; height: 10px; border-radius: 50%; border: 1px solid var(--muted); display: inline-block; }
+.sh-death .pp.ok i.on { background: var(--jade); border-color: var(--jade); } .sh-death .pp.bad i.on { background: var(--danger); border-color: var(--danger); }
+.sh-tabs { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.sh-tabs button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 10px; cursor: pointer; color: var(--muted); font-size: 13px; }
+.sh-tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--pc, var(--jade)); }
+.sh-body { flex: 1; overflow: auto; padding: 8px 12px 16px; display: grid; gap: 4px; align-content: start; }
+.sh-h { font-family: var(--display-sc); font-size: 14px; color: var(--copper); margin: 10px 0 2px; letter-spacing: .02em; }
+.sh-row { border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+.sh-row > summary { list-style: none; display: grid; grid-template-columns: 1fr auto; grid-template-areas: "nm bt" "in bt"; gap: 0 8px; padding: 6px 8px; cursor: pointer; align-items: center; }
+.sh-row > summary::-webkit-details-marker { display: none; }
+.sh-row .nm { grid-area: nm; font-weight: 600; font-size: 13px; display: flex; gap: 6px; align-items: center; }
+.sh-row .in { grid-area: in; font-size: 11.5px; color: var(--muted); font-family: var(--mono); }
+.sh-row .bt { grid-area: bt; display: flex; gap: 4px; }
+.sh-row .tx { padding: 0 10px 8px; font: 13px/1.5 var(--read); color: var(--ink); }
+.sh-row .tx p { margin: 0 0 6px; }
+.sh-row .star { background: none; border: 0; padding: 0; cursor: pointer; color: var(--line); font-size: 13px; }
+.sh-row .star.on { color: #F2D27A; } .sh-row .star:disabled { cursor: default; }
+.sh-more > summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margin: 10px 0 4px; }
+.sh-more .sh-row { margin-bottom: 4px; }
+.sh-slots { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 6px 0; }
+.sh-slots .sl { display: grid; gap: 2px; }
+.sh-slots .pp { display: inline-flex; gap: 4px; }
+.sh-slots .pp button { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--slate-line); background: transparent; cursor: pointer; padding: 0; }
+.sh-slots .pp button.on { background: var(--slate); border-color: var(--slate); }
+.sh-slots .pact .pp button.on { background: #b07ad6; border-color: #b07ad6; }
+.sh-abil { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.sh-abil .ab { border: 1px solid var(--line); border-radius: 6px; background: var(--bg); padding: 6px 8px; display: grid; gap: 4px; }
+.sh-abil .ab.prof { border-color: var(--jade-line); }
+.sh-abil .k { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.sh-abil .v { font-family: var(--mono); font-size: 18px; }
+.sh-abil .rb { flex: 1; }
+.sh-skills { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; }
+.sh-skills .sk { display: flex; justify-content: space-between; gap: 6px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); cursor: pointer; font-size: 12.5px; text-align: left; }
+.sh-skills .sk small { color: var(--muted); font-size: 10px; }
+.sh-skills .sk.prof { border-color: var(--jade-line); } .sh-skills .sk.exp b { color: var(--jade); }
+.sh-skills .sk b { font-family: var(--mono); font-weight: 500; }
+.sh-skills .sk:hover, .sh-abil .rb:hover { border-color: var(--jade); }
+.sh-note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.sh-feat { border-bottom: 1px solid var(--line); padding: 6px 0; } .sh-feat summary { cursor: pointer; font-weight: 600; font-size: 13px; } .sh-feat p { font: 13px/1.5 var(--read); margin-top: 4px; }
+.sh-flags { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--copper); display: grid; gap: 4px; }
+.sh-res { display: flex; gap: 6px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.sh-res .btn.icon { width: 26px; height: 26px; padding: 0; }
+.sh-res b { min-width: 48px; text-align: center; font-weight: 500; }
+.sh-inv { margin: 0; padding-left: 18px; font-size: 13px; display: grid; gap: 2px; }
+.sh-opts select, .sh-opts input[type=number] { width: 100%; }
+@media (max-width: 900px) { .sheet-win.dm, .sheet-win.player { right: 8px; left: 8px; width: auto; } }

@@ -23,7 +23,7 @@ export async function searchBestiary(q, limit = 12) {
 }
 
 // onRoll(formula, label, extra) ; onUse(actionEntry, activity) for automation hooks
-export function renderStatBlock(a, { onRoll, compact = false } = {}) {
+export function renderStatBlock(a, { onRoll, onUse, compact = false } = {}) {
   const roll = (f, label, extra) => onRoll && onRoll(f, `${a.name}: ${label}`, extra);
   const rb = (text, f, label, cls = '') => el('button', { class: 'rb ' + cls, type: 'button', title: 'Roll ' + f, onclick: () => roll(f, label) }, text);
   const sb = el('div', { class: 'statblock' });
@@ -59,7 +59,7 @@ export function renderStatBlock(a, { onRoll, compact = false } = {}) {
     if (!list?.length) return;
     sb.append(el('div', { class: 'sb-h' }, title));
     if (note) sb.append(el('p', { class: 'sb-note' }, note));
-    for (const e of list) sb.append(entry(a, e, roll));
+    for (const e of list) sb.append(entry(a, e, roll, onUse));
   };
   section('Traits', a.traits);
   section('Actions', a.actions);
@@ -70,13 +70,14 @@ export function renderStatBlock(a, { onRoll, compact = false } = {}) {
   return sb;
 }
 
-function entry(a, e, roll) {
+function entry(a, e, roll, onUse) {
   const wrap = el('div', { class: 'sb-entry' });
   const head = el('span', { class: 'en' }, e.name + '. ');
   const body = el('span', { class: 'sb-text', html: stripP(e.text) });
   wrap.append(head, body);
   const btns = el('div', { class: 'sb-btns' });
-  for (const act of e.auto || []) {
+  (e.auto || []).forEach((act, i) => {
+    if (onUse && (act.attack || act.save || act.damage?.length || act.heal)) btns.append(el('button', { class: 'btn small primary', type: 'button', title: act.attack ? 'Attack your targets (T)' : act.area ? 'Place the area, then resolve' : 'Use on your targets (T)', onclick: () => onUse(e, i) }, (act.name || (act.attack ? 'Attack' : 'Use')) + ' ▸'));
     if (act.attack) {
       const b = act.attack.bonus;
       btns.append(el('button', { class: 'rb big', type: 'button', onclick: () => roll(`1d20${b >= 0 ? '+' : ''}${b}`, `${e.name} (attack)`, { attack: true }) }, `Attack ${sign(b)}`));
@@ -89,7 +90,7 @@ function entry(a, e, roll) {
       if (act.attack) btns.append(el('button', { class: 'rb', type: 'button', title: 'Critical hit: dice doubled', onclick: () => roll(critFormula(act.damage), `${e.name} (critical ${types})`) }, 'Crit'));
     }
     if (act.heal) btns.append(el('button', { class: 'rb big', type: 'button', onclick: () => roll(act.heal.f.replace(/\s+/g, ''), `${e.name}`) }, act.heal.f));
-  }
+  });
   const rech = e.name.match(/Recharge (\d)/);
   if (rech) btns.append(el('button', { class: 'rb', type: 'button', onclick: () => roll('1d6', `${e.name.replace(/ \(.*/, '')} recharge (needs ${rech[1]}+)`) }, 'Recharge d6'));
   if (btns.children.length) wrap.append(btns);

@@ -191,10 +191,22 @@ export function rollEntry(r, { mine = false } = {}) {
   return e;
 }
 
+// A rules card: what happened when someone attacked, cast or used something.
+export function cardEntry(cd, { onUndo } = {}) {
+  const who = cd.by || { name: '?', color: '#888' };
+  return el('div', { class: 'roll card' + (cd.undone ? ' undone' : ''), 'data-id': cd.id, style: { '--who': who.color } },
+    el('div', { class: 'rh' }, el('span', { class: 'who' }, who.name), cd.undone ? el('span', { class: 'chip' }, 'undone') : null,
+      el('span', { class: 'when' }, new Date(cd.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))),
+    el('div', { class: 'card-t' }, cd.title.replace(/^[^:]+:\s*/, '')),
+    el('ul', { class: 'card-l' }, (cd.lines || []).map(l => el('li', { class: l.c ? 'c-' + l.c : '' }, l.t))),
+    onUndo && !cd.undone && cd.undo?.length ? el('div', { class: 'card-a' }, el('button', { class: 'btn small ghost', type: 'button', title: 'Put HP, conditions, effects and spent resources back', onclick: () => onUndo(cd) }, 'Undo')) : null);
+}
+
 // The roll log + dice tray widget. onRoll(formula, {mode, hidden}) is called by the tray.
 export class RollLog {
-  constructor(host, { onRoll, canHide = false, myName = '' }) {
+  constructor(host, { onRoll, canHide = false, myName = '', onUndo = null }) {
     this.onRoll = onRoll;
+    this.onUndo = onUndo;
     this.myName = myName;
     this.mode = null;
     this.list = el('div', { class: 'roll-list', role: 'log', 'aria-live': 'polite' });
@@ -216,8 +228,10 @@ export class RollLog {
   }
   clearMode() { this.mode = null; for (const b of this.modeBtns) b.setAttribute('aria-pressed', 'false'); }
   add(r, opts) {
-    if (this.list.querySelector(`[data-id="${r.id}"]`)) return;
-    const e = rollEntry(r, opts);
+    const old = this.list.querySelector(`[data-id="${r.id}"]`);
+    if (old && r.kind !== 'card') return;
+    const e = r.kind === 'card' ? cardEntry(r, { onUndo: this.onUndo }) : rollEntry(r, opts);
+    if (old) { old.replaceWith(e); return; }
     this.list.append(e);
     while (this.list.children.length > 80) this.list.firstChild.remove();
     this.list.scrollTop = this.list.scrollHeight;

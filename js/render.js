@@ -5,8 +5,9 @@ import { FogMask, simplify } from './fog.js';
 import { iconPaths, COND_BY_ID, condId, condLevel } from './conditions.js';
 import { DISPOSITION_COLORS, cellDistance } from './model.js';
 import { clamp } from './util.js';
+import * as geo from './geometry.js';
 
-const CONE_HALF = Math.atan(0.5); // 2024: a cone's width at any point equals its distance from the origin
+const CONE_HALF = geo.CONE_HALF;
 const BACKDROP = '#0d1213';
 
 export class MapView {
@@ -28,6 +29,8 @@ export class MapView {
     this.remoteRulers = new Map(); // key -> { pts, color, name, t }
     this.remoteDrags = new Map();  // tokenId -> { x, y, t }
     this.pings = [];
+    this.targets = new Map(); // tokenId -> [colors]
+    this.placing = null;     // { shape, len, cb } while placing a spell's area
     this.action = null;
     this.pointers = new Map();
     this.myColor = opts.color || '#66C39D';
@@ -71,7 +74,18 @@ export class MapView {
 
   isFogged(x, y) { return !!this.scene?.fog.on && this.fog.fogged(x, y); }
 
-  setTool(t) { this.tool = t; this.action = null; this.canvas.dataset.tool = t; this.dirty = true; }
+  setTool(t) { this.tool = t; this.action = null; this.canvas.dataset.tool = t; if (!t.startsWith('tpl:')) this._cancelPlacing(); this.dirty = true; }
+  setTargets(map) { this.targets = map || new Map(); this.dirty = true; }
+
+  // Place a fixed-size area for a spell or action; cb(template) on release, cb(null) if cancelled.
+  placeArea(spec, cb) {
+    this._cancelPlacing();
+    this.setTool('tpl:' + spec.shape);
+    this.placing = { ...spec, cb };
+    this.dirty = true;
+  }
+  _cancelPlacing() { const p = this.placing; this.placing = null; if (p) p.cb(null); }
+  _finishPlacing(tpl) { const p = this.placing; this.placing = null; this.tool = 'select'; this.canvas.dataset.tool = 'select'; this.o.onToolChange?.('select'); p.cb(tpl); }
 
   // ------------------------------------------------------------ geometry
 
@@ -230,7 +244,8 @@ export class MapView {
     if (tool.startsWith('tpl:')) {
       const shape = tool.slice(4);
       const o = this.snapCorner(w.x, w.y);
-      this.action = { kind: 'tpl', tpl: { shape, x: o.x, y: o.y, dir: 0, len: 5, color: this.myColor }, sx: o.x, sy: o.y };
+      const P = this.placing;
+      this.action = { kind: 'tpl', tpl: { shape, x: o.x, y: o.y, dir: 0, len: P ? P.len : 5, color: this.myColor }, sx: o.x, sy: o.y };
       this.dirty = true; return;
     }
     if (tool.startsWith('fog:')) {
@@ -248,7 +263,7 @@ export class MapView {
     if (!a) {
       const h = this.scene ? this.hitToken(w.x, w.y)?.id || null : null;
       if (h !== this.hover) { this.hover = h; this.dirty = true; }
-      if (this.tool.startsWith('fog:')) this.dirty = true;
+      if (this.tool.startsWith('fog:') || this.placing) this.dirty = true;
       return;
     }
     if (a.kind === 'pinch' && this.pointers.size === 2) {
@@ -282,6 +297,11 @@ export class MapView {
     if (a.kind === 'tpl') {
       const t = a.tpl, gr = this.scene.grid;
       const dx = w.x - a.sx, dy = w.y - a.sy;
+      if (this.placing) {
+        if (Math.hypot(dx, dy) > 4) t.dir = Math.atan2(dy, dx);
+        if (t.shape === 'cube') { const side = t.len / gr.feet * gr.size; t.x = dx < 0 ? a.sx - side : a.sx; t.y = dy < 0 ? a.sy - side : a.sy; }
+        this.dirty = true; return;
+      }
       const distFt = Math.hypot(dx, dy) / gr.size * gr.feet;
       t.len = Math.max(gr.feet, Math.round(distFt / gr.feet) * gr.feet);
       t.dir = Math.atan2(dy, dx);
@@ -320,6 +340,7 @@ export class MapView {
     if (a.kind === 'tpl') {
       const t = a.tpl;
       if (t.shape === 'cube' && t.len < gr.feet) t.len = gr.feet;
+      if (this.placing) { this._finishPlacing({ shape: t.shape, x: Math.round(t.x), y: Math.round(t.y), dir: +t.dir.toFixed(4), len: t.len, color: t.color }); this.dirty = true; return; }
       this.o.onTemplateAdd?.({ shape: t.shape, x: Math.round(t.x), y: Math.round(t.y), dir: +t.dir.toFixed(4), len: t.len, color: t.color });
       this.dirty = true; return;
     }
@@ -342,6 +363,7 @@ export class MapView {
 
   _key(e) {
     if (!this.scene || e.target.closest?.('input, textarea, select, [contenteditable]')) return;
+    if (e.key === 'Escape' && this.placing) { this._cancelPlacing(); this.setTool('select'); this.o.onToolChange?.('select'); return; }
     if (e.key === 'Escape') { this.selected.clear(); this.selectedTpl = null; this.action = null; this.o.onSelect?.([]); this.dirty = true; return; }
     if ((e.key === 'Delete' || e.key === 'Backspace')) {
       if (this.selectedTpl) { this.o.onTemplateRemove?.(this.selectedTpl); this.selectedTpl = null; e.preventDefault(); return; }
@@ -378,49 +400,10 @@ export class MapView {
   _hitTplClose(t, wx, wy) { const p = this._tplHandle(t); return Math.hypot(wx - p.x, wy - p.y) < this.g * 0.3; }
   _tplHandle(t) { return t.shape === 'cube' ? { x: t.x, y: t.y } : { x: t.x, y: t.y }; }
 
-  tplPx(t) { return t.len / this.scene.grid.feet * this.scene.grid.size; }
-
-  inTemplate(t, x, y) {
-    const L = this.tplPx(t), dx = x - t.x, dy = y - t.y;
-    switch (t.shape) {
-      case 'circle': return dx * dx + dy * dy <= L * L + 1;
-      case 'cube': return x >= t.x - 0.5 && x <= t.x + L + 0.5 && y >= t.y - 0.5 && y <= t.y + L + 0.5;
-      case 'cone': {
-        const d = Math.hypot(dx, dy); if (d > L + 1 || d < 1) return d < 1 ? false : false;
-        let a = Math.atan2(dy, dx) - t.dir; a = Math.atan2(Math.sin(a), Math.cos(a));
-        return Math.abs(a) <= CONE_HALF + 0.001;
-      }
-      case 'line': {
-        const W = this.scene.grid.size * (t.wid || this.scene.grid.feet) / this.scene.grid.feet;
-        const ux = Math.cos(t.dir), uy = Math.sin(t.dir);
-        const along = dx * ux + dy * uy, across = -dx * uy + dy * ux;
-        return along >= 0 && along <= L + 0.5 && Math.abs(across) <= W / 2 + 0.5;
-      }
-    }
-    return false;
-  }
-
-  // Grid cells (by centre point) a template covers.
-  templateCells(t) {
-    const gr = this.scene.grid, L = this.tplPx(t) + gr.size;
-    const x0 = Math.floor((t.x - L - gr.ox) / gr.size), x1 = Math.ceil((t.x + L - gr.ox) / gr.size);
-    const y0 = Math.floor((t.y - L - gr.oy) / gr.size), y1 = Math.ceil((t.y + L - gr.oy) / gr.size);
-    const out = [];
-    for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) {
-      const c = this.cellCenter(cx, cy);
-      if (this.inTemplate(t, c.x, c.y)) out.push([cx, cy]);
-    }
-    return out;
-  }
-
-  tokensInTemplate(t) {
-    const cells = new Set(this.templateCells(t).map(c => c.join(',')));
-    return this.scene.tokens.filter(tk => {
-      const s = tk.size || 1;
-      for (let i = 0; i < s; i++) for (let j = 0; j < s; j++) if (cells.has((tk.x + i) + ',' + (tk.y + j))) return true;
-      return false;
-    });
-  }
+  tplPx(t) { return geo.tplPx(this.scene.grid, t); }
+  inTemplate(t, x, y) { return geo.inTemplate(this.scene.grid, t, x, y); }
+  templateCells(t) { return geo.templateCells(this.scene.grid, t); }
+  tokensInTemplate(t) { return geo.tokensInTemplate(this.scene.grid, this.scene.tokens, t); }
 
   // ------------------------------------------------------------ drawing
 
@@ -464,6 +447,7 @@ export class MapView {
     // templates
     for (const t of s.templates) this._drawTemplate(c, t, t.id === this.selectedTpl);
     if (this.action?.kind === 'tpl') this._drawTemplate(c, this.action.tpl, true, true);
+    else if (this.placing && this.cursor) { const o = this.snapCorner(this.cursor.x, this.cursor.y); this._drawTemplate(c, { shape: this.placing.shape, x: o.x, y: o.y, dir: 0, len: this.placing.len, color: this.myColor }, true, true); }
 
     // tokens
     const order = s.tokens.slice().sort((a, b) => (b.size || 1) - (a.size || 1));
@@ -638,6 +622,19 @@ export class MapView {
     if (this.selected.has(t.id)) {
       c.lineWidth = Math.max(2, gr.size * 0.035); c.strokeStyle = '#F2EBDD'; c.setLineDash([gr.size * 0.08, gr.size * 0.06]);
       c.beginPath(); c.arc(cx, cy, r + gr.size * 0.06, 0, Math.PI * 2); c.stroke(); c.setLineDash([]);
+    }
+    // targets: corner brackets in each targeter's colour
+    const tg = this.targets.get(t.id);
+    if (tg?.length) {
+      tg.forEach((col, i) => {
+        const m = r + gr.size * (0.14 + i * 0.07), L = Math.max(6, d * 0.18);
+        c.save(); c.strokeStyle = col; c.lineWidth = Math.max(2.5, gr.size * 0.045); c.lineCap = 'round';
+        for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+          const px = cx + sx * m, py = cy + sy * m;
+          c.beginPath(); c.moveTo(px - sx * L, py); c.lineTo(px, py); c.lineTo(px, py - sy * L); c.stroke();
+        }
+        c.restore();
+      });
     }
     if (t.health === 'bloodied' || (t.hp && t.hp.max && t.hp.value > 0 && t.hp.value <= t.hp.max / 2 && t.kind !== 'pc' && this.role === 'dm')) {
       this._icon(c, 'bloodied', cx - r * 0.72, cy + r * 0.62, gr.size * 0.15, '#c0392b');

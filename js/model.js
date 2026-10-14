@@ -1,6 +1,7 @@
 // Campaign data model: factories, rules helpers and the player-facing filter.
 import { uid, clone } from './util.js';
 import { combatView } from './combat.js';
+import { COND_BY_ID, condId } from './conditions.js';
 
 export const THEMES = { ironclad: 'Ironclad Inquiries', erta: 'Erta' };
 export const DISPOSITION_COLORS = { hostile: '#c8553d', neutral: '#d6a73c', friendly: '#4f9d69' };
@@ -79,9 +80,22 @@ export function cellDistance(dx, dy, mode = 'equal') {
 export function tokenStats(c, t) {
   if (t.charId) {
     const ch = c.characters.find(x => x.id === t.charId);
-    if (ch) return { name: ch.name, hp: ch.hp, ac: ch.ac, conditions: ch.conditions, color: ch.color, img: ch.img || t.img, size: ch.size || t.size };
+    if (ch) return { name: ch.name, hp: ch.hp, ac: acWith(ch.ac, ch.effects), conditions: ch.conditions, icons: iconsFor(ch.conditions, ch.effects), color: ch.color, img: ch.img || t.img, size: ch.size || t.size };
   }
-  return { name: t.name, hp: t.hp, ac: t.ac, conditions: t.conditions, color: t.color, img: t.img, size: t.size };
+  return { name: t.name, hp: t.hp, ac: acWith(t.ac, t.effects), conditions: t.conditions, icons: iconsFor(t.conditions, t.effects), color: t.color, img: t.img, size: t.size };
+}
+
+export function acWith(ac, effects) { let v = ac; for (const e of effects || []) v += Number(e.mods?.acBonus) || 0; return v; }
+
+// Conditions plus a marker for each active effect (Bless, Hunter's Mark, ...), for drawing on tokens.
+export function iconsFor(conds = [], effects = []) {
+  const out = [...(conds || [])];
+  const ids = new Set(out.map(condId));
+  for (const e of effects || []) {
+    const id = COND_BY_ID[e.icon] ? e.icon : 'marked';
+    if (!ids.has(id)) { ids.add(id); out.push(id); }
+  }
+  return out;
 }
 
 export function isBloodied(hp) { return hp && hp.max > 0 && hp.value > 0 && hp.value <= hp.max / 2; }
@@ -93,7 +107,7 @@ export function playerView(c, charId, scene, fogged) {
   const me = c.characters.find(x => x.id === charId);
   const party = c.characters.map(ch => ({
     id: ch.id, name: ch.name, player: ch.player, color: ch.color, img: ch.img,
-    hp: ch.hp, ac: ch.ac, conditions: ch.conditions, speed: ch.speed,
+    hp: ch.hp, ac: acWith(ch.ac, ch.effects), conditions: ch.conditions, speed: ch.speed, hasSheet: !!ch.sheet,
   }));
   let s = null;
   if (scene) {
@@ -104,7 +118,7 @@ export function playerView(c, charId, scene, fogged) {
       const st = tokenStats(c, t);
       const size = st.size || 1;
       if (!t.charId && scene.fog.on && fogged && fogged(scene.grid.ox + (t.x + size / 2) * g, scene.grid.oy + (t.y + size / 2) * g)) continue;
-      const pub = { id: t.id, name: st.name, x: t.x, y: t.y, size, img: st.img, color: st.color, kind: t.kind, charId: t.charId, disposition: t.disposition, conditions: st.conditions };
+      const pub = { id: t.id, name: st.name, x: t.x, y: t.y, size, img: st.img, color: st.color, kind: t.kind, charId: t.charId, owner: t.owner || null, disposition: t.disposition, conditions: st.icons };
       if (t.charId) { pub.hp = st.hp; pub.ac = st.ac; }
       else if (c.settings.monsterHealth === 'full') pub.hp = st.hp;
       else if (c.settings.monsterHealth === 'bloodied') pub.health = st.hp.value <= 0 ? 'down' : isBloodied(st.hp) ? 'bloodied' : 'ok';
@@ -117,7 +131,7 @@ export function playerView(c, charId, scene, fogged) {
   }
   return {
     campaign: { name: c.name, theme: c.theme },
-    you: me ? { charId: me.id, name: me.name, color: me.color } : null,
+    you: me ? { charId: me.id, name: me.name, color: me.color, sheet: me.sheet || null, state: me.state || {}, effects: (me.effects || []).map(e => ({ id: e.id, name: e.name, rounds: e.rounds, origin: e.origin?.name, conc: !!e.conc })), concentration: me.concentration || null } : null,
     party, scene: s,
     audio: { music: c.audio.music, ambience: c.audio.ambience },
     handout: c.handout, paused: c.paused,
