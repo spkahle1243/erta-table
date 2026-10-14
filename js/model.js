@@ -122,6 +122,7 @@ export function playerView(c, charId, scene, fogged) {
     audio: { music: c.audio.music, ambience: c.audio.ambience },
     handout: c.handout, paused: c.paused,
     combat: combatView(c.combat, charId),
+    clocks: (c.clocks || []).filter(k => k.visible && (!c.activePack || k.pack === c.activePack)).map(k => ({ name: k.name, size: k.size, value: k.value })),
     settings: { diagonals: c.settings.diagonals },
   };
 }

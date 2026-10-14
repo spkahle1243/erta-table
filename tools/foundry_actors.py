@@ -331,7 +331,9 @@ def convert(d, src):
     senses = [f"{k.title()} {v} ft." for k, v in sen.items() if v]
     pp = 10 + skills.get('Perception', m['wis'])
     langs = [title(x) if x != 'cant' else "Thieves' Cant" for x in (tr.get('languages') or {}).get('value') or []]
-    if (tr.get('languages') or {}).get('custom'): langs.append(tr['languages']['custom'])
+    custom = (tr.get('languages') or {}).get('custom')
+    if custom:
+        langs = [l for l in langs if l.lower() not in custom.lower()] + [custom]
     lst = lambda k: [title(x) for x in (tr.get(k) or {}).get('value') or []] + ([tr[k]['custom']] if (tr.get(k) or {}).get('custom') else [])
     cr = ctx.cr
     size = SIZES.get(tr.get('size'), ('Medium', 1))

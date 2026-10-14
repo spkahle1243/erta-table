@@ -97,6 +97,7 @@ function buildApp() {
     el('header', { class: 'topbar' },
       el('div', { class: 'title', id: 'title' }, 'Erta Table'),
       el('div', { class: 'spacer' }),
+      el('div', { class: 'clock-chips', id: 'clock-chips' }),
       el('span', { class: 'chip', id: 'loading', hidden: true }),
       el('span', { class: 'status', id: 'net' }),
       el('button', { class: 'btn icon ghost', type: 'button', title: 'Volume', html: ICONS.vol, onclick: e => volumePop(e) })),
@@ -202,6 +203,8 @@ async function render() {
     empty.append(el('div', {}, el('h2', {}, 'The table is being set'), el('p', {}, 'Your DM hasn’t shown a scene yet.')));
   }
   $('#paused').hidden = !v.paused;
+  const cc = $('#clock-chips'); cc.innerHTML = '';
+  for (const k of v.clocks || []) cc.append(el('span', { class: 'clock-chip', title: `${k.name}: ${k.value} of ${k.size}` }, el('span', { class: 'nm' }, k.name), el('span', { class: 'pp' }, Array.from({ length: k.size }, (_, i) => el('i', { class: i < k.value ? 'on' : '' })))));
   renderCombat();
   renderPc(); renderParty(); renderHandoutView();
 }

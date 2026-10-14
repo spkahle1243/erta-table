@@ -12,13 +12,14 @@ import { ICONS, modal, confirmBox, promptBox, popover, closePopover, hpCondition
 import { roll as rollDice, withAdvantage, DiceOverlay, RollLog } from './dice.js';
 import { newCombat, combatant, sortCombat, current as currentCombatant, advance, combatView, renderStrip } from './combat.js';
 import { loadBestiary, searchBestiary, renderStatBlock } from './statblock.js';
+import { importPack, paneprep, actorModal, encounterTokens, clockWidget } from './prep.js';
 
 const DM_COLOR = '#E5916A';
 
 const S = {
   camp: null, viewId: null, host: null, view: null, audio: null,
   selection: [], tab: 'scene', activeFog: new FogMask(), panelDirty: false,
-  dice: null, log: null,
+  dice: null, log: null, prepSection: null, prepFollow: true,
 };
 window.__dm = S; // handy for debugging from the console
 
@@ -97,6 +98,8 @@ function migrate(c) {
   c.settings ||= { diagonals: 'equal', monsterHealth: 'bloodied' };
   c.handouts ||= [];
   c.rolls ||= [];
+  c.packs ||= {};
+  c.clocks ||= [];
   c.actors ||= {};
   if (c.combat === undefined) c.combat = null;
   for (const ch of c.characters) ch.init ??= 0;
@@ -284,6 +287,7 @@ function syncAudio() {
 }
 
 function playTrack(track) {
+  if (!track.asset) { toast(`“${track.name}” has no audio file yet: attach one in Audio or Prep`, 'bad'); return; }
   if (track.kind === 'sfx') {
     S.host.broadcast({ t: 'sfx', asset: track.asset, vol: track.vol ?? 1 });
     S.audio.sfx(track.asset, track.vol ?? 1);
@@ -314,6 +318,7 @@ function buildApp() {
       el('button', { class: 'btn ghost small', type: 'button', onclick: goHome, title: 'All campaigns' }, '← Campaigns'),
       el('div', { class: 'title', id: 'camp-title' }),
       el('div', { class: 'spacer' }),
+      el('div', { class: 'clock-chips', id: 'clock-chips' }),
       el('div', { class: 'who', id: 'who' }),
       el('span', { class: 'status', id: 'net-status' }),
       el('button', { class: 'btn small', id: 'pause-btn', type: 'button', onclick: () => change(c => { c.paused = !c.paused; }) }, 'Pause'),
@@ -390,6 +395,17 @@ function renderStatus() {
   const online = new Set([...h.clients.values()].map(c => c.info.charId));
   const who = $('#who'); who.innerHTML = '';
   for (const ch of S.camp.characters) who.append(el('span', { class: 'p' + (online.has(ch.id) ? ' on' : ''), style: { background: ch.color }, title: `${ch.name} (${ch.player || 'player'}): ${online.has(ch.id) ? 'connected' : 'not connected'}` }, initials(ch.name)));
+  const cc = $('#clock-chips');
+  if (cc) {
+    cc.innerHTML = '';
+    for (const k of (S.camp.clocks || []).filter(k => !S.camp.activePack || k.pack === S.camp.activePack)) {
+      const b = el('button', { class: 'clock-chip' + (k.visible ? '' : ' hidden'), type: 'button', title: `${k.name}${k.visible ? '' : ' (hidden from players)'}. Click +1, right-click −1.${k.steps?.[k.value] ? '\nAt ' + k.value + ': ' + k.steps[k.value] : ''}`,
+        onclick: () => change(() => { k.value = Math.min(k.size, k.value + 1); }) },
+        el('span', { class: 'nm' }, k.name), el('span', { class: 'pp' }, Array.from({ length: k.size }, (_, i) => el('i', { class: i < k.value ? 'on' : '' }))));
+      b.addEventListener('contextmenu', e => { e.preventDefault(); change(() => { k.value = Math.max(0, k.value - 1); }); });
+      cc.append(b);
+    }
+  }
   $('#pause-btn').setAttribute('aria-pressed', S.camp.paused ? 'true' : 'false');
   $('#pause-btn').textContent = S.camp.paused ? 'Paused' : 'Pause';
 }
@@ -453,7 +469,7 @@ async function renderRail() {
     const thumb = el('span', { class: 'thumb' });
     if (s.bg) assets.url(s.bg).then(u => { if (u) thumb.style.backgroundImage = `url("${u}")`; });
     const li = el('li', { class: 'scene-item' + (s.id === S.viewId ? ' viewing' : ''), title: 'Click to view. Players only see the scene marked LIVE.', onclick: () => viewScene(s.id) },
-      thumb, el('div', {}, el('div', { class: 'nm' }, s.name), el('div', { class: 'kind' }, s.kind === 'art' ? 'scene art' : `map · ${s.tokens.length} token${s.tokens.length === 1 ? '' : 's'}`)),
+      thumb, el('div', {}, el('div', { class: 'nm' }, s.name), el('div', { class: 'kind' }, (s.kind === 'art' ? 'scene art' : `map · ${s.tokens.length} token${s.tokens.length === 1 ? '' : 's'}`) + (s.bg ? '' : ' · needs image'))),
       s.id === S.camp.activeSceneId ? el('span', { class: 'live' }, 'LIVE') : null);
     li.addEventListener('dragover', e => e.preventDefault());
     li.addEventListener('drop', async e => { e.preventDefault(); const f = [...(e.dataTransfer?.files || [])].find(f => f.type.startsWith('image/')); if (f) { await setBackground(s, f); } });
@@ -465,6 +481,9 @@ async function renderRail() {
 
 function viewScene(id) {
   S.viewId = id; S.selection = [];
+  const sc = S.camp.scenes.find(s => s.id === id);
+  if (S.prepFollow !== false && sc?.packRef?.section) S.prepSection = sc.packRef.section;
+  if (S.tab === 'prep') renderPanel(true);
   S.view.selected.clear();
   renderRail(); refreshMap(); if (S.tab === 'scene' || S.tab === 'tokens') renderPanel(true);
 }
@@ -525,7 +544,7 @@ function activate(id) {
     const lib = c.audio.library;
     for (const k of ['music', 'ambience']) {
       const tid = sc?.[k]; const tr = tid && lib.find(t => t.id === tid);
-      if (tr && c.audio[k]?.trackId !== tr.id) c.audio[k] = { trackId: tr.id, asset: tr.asset, name: tr.name, startedAt: Date.now(), loop: true, vol: tr.vol ?? 1 };
+      if (tr && tr.asset && c.audio[k]?.trackId !== tr.id) c.audio[k] = { trackId: tr.id, asset: tr.asset, name: tr.name, startedAt: Date.now(), loop: true, vol: tr.vol ?? 1 };
     }
   }, { rail: true });
   toast(`Players now see “${sc.name}”`, 'ok');
@@ -565,6 +584,7 @@ async function setBackground(sc, file, squaresAcross = 0, quiet = false) {
   if (!dims) { toast('That image could not be read', 'bad'); return; }
   change(() => {
     sc.bg = id; sc.width = dims.w; sc.height = dims.h;
+    if (!squaresAcross && sc.squares) squaresAcross = sc.squares[0];
     if (squaresAcross) { sc.grid.size = dims.w / squaresAcross; sc.grid.ox = 0; sc.grid.oy = 0; }
     else if (!sc._gridSet) sc.grid.size = Math.max(40, Math.round(dims.w / 30));
   }, { rail: true });
@@ -628,7 +648,48 @@ function tokenHud(id, x, y) {
 
 // ======================================================================= side panel
 
-const TABS = [['scene', 'Scene'], ['tokens', 'Tokens'], ['combat', 'Combat'], ['party', 'Party'], ['audio', 'Audio'], ['handouts', 'Handouts'], ['settings', 'Settings']];
+const TABS = [['prep', 'Prep'], ['scene', 'Scene'], ['tokens', 'Tokens'], ['combat', 'Combat'], ['party', 'Party'], ['audio', 'Audio'], ['handouts', 'Handouts'], ['settings', 'Settings']];
+
+function panePrep() {
+  return paneprep({
+    camp: S.camp, state: S,
+    change: (fn, o) => change(fn, o),
+    renderPanel, scrollPane: y => { $('#pane').scrollTop = y; },
+    viewScene, activate, setBackground,
+    playTrack: t => playTrack(t),
+    attachTrack,
+    showHandout: h => { change(c => { c.handout = h; }); toast('Showing to players'); },
+    loadPack,
+    placeEncounter: (pack, enc, gi) => placeEncounter(pack, enc, gi),
+    openActor: id => { const a = S.camp.actors[id]; if (a) actorModal(a, (f, label) => dmRoll(f, { label })); },
+  });
+}
+
+function loadPack(pk) {
+  let res;
+  try { change(c => { res = importPack(c, pk); }, { rail: true }); }
+  catch (e) { toast(e.message, 'bad'); return; }
+  S.tab = 'prep'; S.prepSection = null; renderTabs(); renderPanel(true);
+  toast(res.fresh ? `Loaded “${pk.title}”: ${res.added} scenes ready for images` : `Updated “${pk.title}”${res.added ? `, ${res.added} new scenes` : ''}`, 'ok');
+}
+
+async function attachTrack(t, f) {
+  const id = await assets.put(f, f.name);
+  const dur = await audioDuration(await assets.url(id));
+  change(() => { t.asset = id; t.dur = dur; t.file = f.name; });
+  toast(`Attached to “${t.name}”`, 'ok');
+}
+
+function placeEncounter(pack, enc, gi) {
+  const target = S.camp.scenes.find(x => x.packRef?.pack === pack.id && x.packRef.key === enc.scene) || scene();
+  if (!target) { toast('Make a scene first', 'bad'); return; }
+  if (target.id !== S.viewId) viewScene(target.id);
+  const g = target.grid;
+  const center = { cx: Math.floor((S.view.cam.x - g.ox) / g.size), cy: Math.floor((S.view.cam.y - g.oy) / g.size) };
+  const toks = encounterTokens(S.camp, pack, enc, gi, center, g);
+  change(() => target.tokens.push(...toks));
+  toast(`Placed ${toks.length} hidden token${toks.length === 1 ? '' : 's'} on “${target.name}”. Drag them into place, then reveal.`, 'ok');
+}
 
 function renderTabs() {
   const tabs = $('#tabs'); tabs.innerHTML = '';
@@ -641,7 +702,8 @@ function renderPanel(force = false) {
   S.panelDirty = false;
   const top = pane.scrollTop;
   pane.innerHTML = '';
-  const fn = { scene: paneScene, tokens: paneTokens, combat: paneCombat, party: paneParty, audio: paneAudio, handouts: paneHandouts, settings: paneSettings }[S.tab];
+  $('#app')?.classList.toggle('wide-panel', S.tab === 'prep');
+  const fn = { prep: panePrep, scene: paneScene, tokens: paneTokens, combat: paneCombat, party: paneParty, audio: paneAudio, handouts: paneHandouts, settings: paneSettings }[S.tab];
   pane.append(fn());
   pane.scrollTop = top;
 }
@@ -664,7 +726,7 @@ function paneScene() {
   const g = sc.grid;
   const lib = S.camp.audio.library;
   const trackSel = (kind) => {
-    const s = el('select', {}, el('option', { value: '' }, '— none —'), lib.filter(t => t.kind === kind).map(t => el('option', { value: t.id, selected: sc[kind] === t.id }, t.name)));
+    const s = el('select', {}, el('option', { value: '' }, '— none —'), lib.filter(t => t.kind === kind || sc[kind] === t.id).map(t => el('option', { value: t.id, selected: sc[kind] === t.id }, t.name + (t.asset ? '' : ' (no file yet)'))));
     s.addEventListener('change', () => change(() => { sc[kind] = s.value || null; }));
     return s;
   };
@@ -680,6 +742,9 @@ function paneScene() {
       const s = el('select', {}, el('option', { value: 'map', selected: sc.kind === 'map' }, 'Battle map'), el('option', { value: 'art', selected: sc.kind === 'art' }, 'Scene art'));
       s.addEventListener('change', () => change(() => { sc.kind = s.value; if (s.value === 'art') sc.fog.on = false; }, { rail: true })); return s;
     })()),
+    sc.prompt ? el('details', { class: 'prompt-box', open: !sc.bg }, el('summary', { class: 'small' }, (sc.kind === 'map' ? 'Battle map prompt' : 'Art prompt') + (sc.squares ? ` · ${sc.squares[0]} × ${sc.squares[1]} squares` : '')),
+      el('p', { class: 'small' }, sc.prompt),
+      el('button', { class: 'btn small', type: 'button', html: ICONS.copy + ' Copy prompt', onclick: async () => { if (await copyText(sc.prompt)) toast('Prompt copied', 'ok'); } })) : null,
     el('div', { class: 'row' },
       el('button', { class: 'btn', type: 'button', onclick: async () => { const [f] = await pickFiles({ accept: 'image/*' }); if (f) setBackground(sc, f); } }, sc.bg ? 'Replace image…' : 'Choose image…'),
       sc.bg ? el('span', { class: 'small muted' }, `${sc.width} × ${sc.height} px`) : null),
@@ -1015,8 +1080,9 @@ function paneAudio() {
       const kindSel = el('select', { style: { width: 'auto', padding: '2px 4px', fontSize: '11px' } }, ['music', 'ambience', 'sfx'].map(k => el('option', { value: k, selected: k === t.kind }, k)));
       kindSel.addEventListener('change', () => change(() => { t.kind = kindSel.value; }));
       wrap.append(el('div', { class: 'track' + (playing ? ' playing' : '') },
-        el('button', { class: 'btn icon', type: 'button', title: kind === 'sfx' ? 'Play for everyone' : 'Play for everyone (crossfades)', html: ICONS.play, onclick: () => playTrack(t) }),
-        el('div', { style: { minWidth: 0 } }, el('div', { class: 'nm' }, t.name), el('div', { class: 'kind' }, t.dur ? fmtDur(t.dur) : '')),
+        t.asset ? el('button', { class: 'btn icon', type: 'button', title: kind === 'sfx' ? 'Play for everyone' : 'Play for everyone (crossfades)', html: ICONS.play, onclick: () => playTrack(t) })
+          : el('button', { class: 'btn icon', type: 'button', title: 'Attach the audio file for this slot', html: '+', onclick: async () => { const [f] = await pickFiles({ accept: 'audio/*' }); if (f) attachTrack(t, f); } }),
+        el('div', { style: { minWidth: 0 } }, el('div', { class: 'nm' }, t.name), el('div', { class: 'kind' }, t.asset ? (t.dur ? fmtDur(t.dur) : '') : 'no file yet' + (t.prompt ? ' · prompt in Prep' : ''))),
         el('div', { class: 'row', style: { gap: '4px' } }, kindSel,
           el('button', { class: 'btn icon ghost', type: 'button', title: 'Remove from library', html: ICONS.x, onclick: () => change(c => { c.audio.library = c.audio.library.filter(x => x.id !== t.id); for (const s of c.scenes) { if (s.music === t.id) s.music = null; if (s.ambience === t.id) s.ambience = null; } }) }))));
     }
