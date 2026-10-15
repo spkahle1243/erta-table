@@ -49,15 +49,34 @@ Characters with a converted sheet (Party tab → **Open sheet**) get full automa
 
 New sheets are built from the PDFs with `tools/build_sheets.py` (sources in `tools/chars/`).
 
+## Image Kit (pictures with Gemini)
+
+Prep tab → **Image Kit…** makes every picture the table needs: token art for each creature and character, battle maps, scene art and NPC portraits.
+
+1. **Copy the Image Kit** and paste it into a new Gemini chat with Canvas turned on. Gemini runs it as a small app; your Gemini plan covers the pictures.
+2. **Copy the list** and paste it into the kit. Click **Generate missing**, check each picture (edit a prompt and **Make another** if one misses), then **Download zip**.
+3. Back in Erta Table, **Load images (.zip)** (or drop the zip on the map). Scenes and battle maps get their backgrounds and grids, tokens on the map and every new token of that creature wear their art, characters get their token, and portraits become handouts you can show from the prep.
+
+With a Gemini API key you can skip Canvas: **Open the Image Kit** runs it on this site, and **Send to** puts the pictures straight into the open table. The kit itself is `image-kit.html`.
+
 ## Roadmap
 
 - **Case 3 test run** with the DM before game night.
 - **Gemini Canvas "Image Kit":** a small app to paste into Gemini Canvas. Erta Table copies a pack's image prompts with one click; the kit generates them with your own Gemini login and downloads one zip named by scene, portrait and handout; dropping the zip on Erta Table files every image in its place.
 - A session pack with every new prep.
 
+## Image Kit (pictures with Gemini)
+
+Prep tab → **Image Kit…** makes every picture the table needs: token art for each creature and character, battle maps, scene art and NPC portraits.
+
+1. **Copy the Image Kit** and paste it into a new Gemini chat with Canvas turned on. Gemini runs it as a small app; your Gemini plan covers the pictures.
+2. **Copy the list** and paste it into the kit. Click **Generate missing**, check each picture (edit a prompt and **Make another** if one misses), then **Download zip**.
+3. Back in Erta Table, **Load images (.zip)** (or drop the zip on the map). Scenes and battle maps get their backgrounds and grids, tokens on the map and every new token of that creature wear their art, characters get their token, and portraits become handouts you can show from the prep.
+
+With a Gemini API key you can skip Canvas: **Open the Image Kit** runs it on this site, and **Send to** puts the pictures straight into the open table. The kit itself is `image-kit.html`.
+
 ## Roadmap
 
-- **Image Kit (Gemini Canvas).** A small app to paste into Gemini Canvas. Erta Table copies a pack's image prompts with one click; the Image Kit generates them with your Gemini login and downloads one zip named by scene, portrait and handout; dropping the zip on Erta Table files every image in its place.
 - A session pack with every new prep.
 
 ## If a player can't connect

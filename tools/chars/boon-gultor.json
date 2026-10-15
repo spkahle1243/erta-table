@@ -1,94 +1,466 @@
 {
-  "id": "boon-gultor", "name": "Boon Gultor", "player": "Andy", "series": "ironclad", "color": "#B0421D",
-  "species": "Dwarf", "background": "Criminal",
-  "classes": [ { "name": "Artificer", "sub": "Artillerist", "level": 12, "hd": 8 } ],
-  "abilities": { "str": 11, "dex": 14, "con": 6, "int": 20, "wis": 14, "cha": 15 },
-  "saveProf": ["con", "int"],
-  "saveBonus": 3, "saveBonusNote": "Cloak of Protection +1, Ring of Protection +1, Stone of Good Luck +1",
-  "checkBonus": 1, "checkBonusNote": "Stone of Good Luck",
-  "skills": { "Arcana": 1, "History": 1, "Insight": 1, "Investigation": 1, "Medicine": 1, "Perception": 1, "Sleight of Hand": 1, "Stealth": 1 },
-  "skillNotes": { "Stealth": "disadvantage (scale mail)" },
-  "tools": "Thieves' tools (expertise), Tinker's tools (expertise), Woodcarver's tools (expertise), artisan's tools",
-  "ac": 23, "acNote": "Scale mail +1 (16), +2 shield (+4), Cloak of Protection +1, Ring of Protection +1, Dex +2",
-  "hp": 70, "speed": "60 ft", "size": 1, "initBonus": 0,
-  "senses": "Darkvision 120 ft; Tremorsense 60 ft (Stonecunning)",
-  "languages": "Common, Goblin, Draconic",
-  "resist": ["poison"], "saveNotes": "Advantage on Con saves to keep concentration (War Caster); advantage on saves to avoid or end Poisoned.",
-  "concAdv": true,
-  "spellcasting": { "ability": "int", "attackBonus": 2, "attackNote": "Wand of the War Mage +2", "slots": [4, 3, 3], "focusDamage": { "label": "Arcane Firearm", "f": "1d8" } },
-  "spells": [
-    "fire-bolt", "mending", "shocking-grasp",
-    { "id": "shield", "always": true }, { "id": "thunderwave", "always": true }, { "id": "scorching-ray", "always": true }, { "id": "shatter", "always": true }, { "id": "fireball", "always": true }, { "id": "wind-wall", "always": true },
-    { "id": "alarm", "prepared": true }, { "id": "cure-wounds", "prepared": true }, { "id": "detect-magic", "prepared": true }, { "id": "feather-fall", "prepared": true }, { "id": "identify", "prepared": true },
-    { "id": "blur", "prepared": true }, { "id": "dragons-breath", "prepared": true }, { "id": "heat-metal", "prepared": true }, { "id": "web", "prepared": true },
-    { "id": "glyph-of-warding", "prepared": true }, { "id": "revivify", "prepared": true },
-    "disguise-self", "expeditious-retreat", "faerie-fire", "false-life", "grease", "jump", "longstrider", "purify-food-and-drink", "sanctuary",
-    "aid", "alter-self", "arcane-lock", "arcane-vigor", "continual-flame", "darkvision", "enhance-ability", "enlarge-reduce", "invisibility", "lesser-restoration", "levitate", "magic-mouth", "magic-weapon", "protection-from-poison", "rope-trick", "see-invisibility", "spider-climb",
-    "blink", "create-food-and-water", "dispel-magic", { "custom": "elemental-weapon" }, "fly", "haste", "protection-from-energy", "water-breathing", "water-walk"
+ "id": "boon-gultor",
+ "name": "Boon Gultor",
+ "player": "Andy",
+ "series": "ironclad",
+ "color": "#B0421D",
+ "species": "Dwarf",
+ "background": "Criminal",
+ "classes": [
+  {
+   "name": "Artificer",
+   "sub": "Artillerist",
+   "level": 12,
+   "hd": 8
+  }
+ ],
+ "abilities": {
+  "str": 11,
+  "dex": 14,
+  "con": 6,
+  "int": 20,
+  "wis": 14,
+  "cha": 15
+ },
+ "saveProf": [
+  "con",
+  "int"
+ ],
+ "saveBonus": 3,
+ "saveBonusNote": "Cloak of Protection +1, Ring of Protection +1, Stone of Good Luck +1",
+ "checkBonus": 1,
+ "checkBonusNote": "Stone of Good Luck",
+ "skills": {
+  "Arcana": 1,
+  "History": 1,
+  "Insight": 1,
+  "Investigation": 1,
+  "Medicine": 1,
+  "Perception": 1,
+  "Sleight of Hand": 1,
+  "Stealth": 1
+ },
+ "skillNotes": {
+  "Stealth": "disadvantage (scale mail)"
+ },
+ "tools": "Thieves' tools (expertise), Tinker's tools (expertise), Woodcarver's tools (expertise), artisan's tools",
+ "ac": 23,
+ "acNote": "Scale mail +1 (16), +2 shield (+4), Cloak of Protection +1, Ring of Protection +1, Dex +2",
+ "hp": 70,
+ "speed": "60 ft",
+ "size": 1,
+ "initBonus": 0,
+ "senses": "Darkvision 120 ft; Tremorsense 60 ft (Stonecunning)",
+ "languages": "Common, Goblin, Draconic",
+ "resist": [
+  "poison"
+ ],
+ "saveNotes": "Advantage on Con saves to keep concentration (War Caster); advantage on saves to avoid or end Poisoned.",
+ "concAdv": true,
+ "spellcasting": {
+  "ability": "int",
+  "attackBonus": 2,
+  "attackNote": "Wand of the War Mage +2",
+  "slots": [
+   4,
+   3,
+   3
   ],
-  "customSpells": {
-    "elemental-weapon": { "name": "Elemental Weapon", "level": 3, "school": "Transmutation", "time": "Action", "range": "Touch", "duration": "1 hour", "conc": true, "comp": "VS",
-      "text": "<p>A nonmagical weapon you touch becomes a magic weapon. Choose Acid, Cold, Fire, Lightning or Thunder. The weapon has a +1 bonus to attack rolls and deals an extra 1d4 damage of the chosen type when it hits. <strong>Using a Higher-Level Spell Slot.</strong> Slot 5–6: +2 and 2d4; slot 7+: +3 and 3d4.</p>" }
+  "focusDamage": {
+   "label": "Arcane Firearm",
+   "f": "1d8"
+  }
+ },
+ "spells": [
+  "fire-bolt",
+  "mending",
+  "shocking-grasp",
+  {
+   "id": "shield",
+   "always": true
   },
-  "resources": [
-    { "id": "cannon", "name": "Eldritch Cannon", "max": 1, "recover": "lr", "note": "Or spend a spell slot to create one" },
-    { "id": "flash", "name": "Flash of Genius", "max": 5, "recover": "lr" },
-    { "id": "storing", "name": "Spell-Storing Item", "max": 10, "recover": "lr" },
-    { "id": "stonecunning", "name": "Stonecunning", "max": 4, "recover": "lr" },
-    { "id": "wand-mm", "name": "Wand of Magic Missiles (charges)", "max": 7, "recover": "dawn" }
-  ],
-  "actions": [
-    { "id": "cannon-create", "name": "Create Eldritch Cannon", "time": "action", "uses": "cannon", "summon": "eldritch-cannon",
-      "text": "Use woodcarver's or smith's tools to create a Small or Tiny cannon in an unoccupied space within 5 ft: Flamethrower, Force Ballista or Protector. It lasts 1 hour, until it drops to 0 HP, or until you dismiss it (action). Once per long rest, or spend a spell slot of level 1+." },
-    { "id": "cannon-ballista", "name": "Cannon: Force Ballista", "time": "bonus", "kind": "spell-attack",
-      "text": "Activate the cannon (bonus action, within 60 ft). Ranged spell attack, 120 ft. Hit: 3d8 Force and the target is pushed 5 ft away.",
-      "attack": { "kind": "ranged", "spell": true, "range": [120, null], "noFocus": true }, "damage": [ { "n": 3, "d": 8, "type": "force" } ] },
-    { "id": "cannon-flame", "name": "Cannon: Flamethrower", "time": "bonus",
-      "text": "Activate the cannon: 15-ft Cone from the cannon. Dexterity save; 3d8 Fire on a failure, half on a success. Unattended flammable objects ignite.",
-      "save": { "abil": ["dex"] }, "onSave": "half", "area": { "shape": "cone", "size": 15 }, "damage": [ { "n": 3, "d": 8, "type": "fire" } ] },
-    { "id": "cannon-protector", "name": "Cannon: Protector", "time": "bonus",
-      "text": "Activate the cannon: it and each creature you choose within 10 ft of it gain 1d8 + 5 Temporary Hit Points.",
-      "tempHp": { "f": "1d8+5" } },
-    { "id": "cannon-detonate", "name": "Cannon: Detonate", "time": "action",
-      "text": "Detonate the cannon (within 60 ft): 20-ft-radius Sphere, Dexterity save; 3d8 Force on a failure, half on a success. The cannon is destroyed.",
-      "save": { "abil": ["dex"] }, "onSave": "half", "area": { "shape": "circle", "size": 20 }, "damage": [ { "n": 3, "d": 8, "type": "force" } ] },
-    { "id": "flash", "name": "Flash of Genius", "time": "reaction", "uses": "flash",
-      "text": "When you or a creature within 30 ft makes an ability check or saving throw, add +5 (your Int modifier) to the roll." },
-    { "id": "stonecunning", "name": "Stonecunning", "time": "bonus", "uses": "stonecunning",
-      "text": "Gain Tremorsense 60 ft for 10 minutes while on or touching natural or worked stone.", "selfEffect": { "name": "Tremorsense", "icon": "marked", "rounds": 100 } },
-    { "id": "storing", "name": "Spell-Storing Item", "time": "action", "uses": "storing",
-      "text": "A creature holding the infused item casts the stored 1st- or 2nd-level artificer spell using your abilities." },
-    { "id": "wand-mm", "name": "Wand of Magic Missiles", "time": "action", "uses": "wand-mm",
-      "text": "Expend 1+ charges to cast Magic Missile (1 charge = level 1, +1 level per extra charge). Regains 1d6+1 charges at dawn.", "castSpell": "magic-missile" }
-  ],
-  "summons": {
-    "eldritch-cannon": { "name": "Eldritch Cannon", "size": "Small", "squares": 1, "type": "Object", "alignment": "", "ac": 18, "hp": { "max": 60, "formula": "5 × artificer level" }, "init": 0,
-      "speed": "15 ft., Climb 15 ft.", "abilities": { "str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10 }, "saves": {}, "skills": {},
-      "senses": "Passive Perception 10", "languages": "—", "resist": [], "immune": ["Poison", "Psychic"], "vuln": [], "condImmune": [], "cr": 0, "crText": "—", "xp": 0, "pb": 4,
-      "traits": [ { "name": "Creator", "text": "<p>Acts only when Boon activates it (bonus action within 60 ft). Uses Boon's spell attack (+9) and save DC (17). Regains 2d6 HP when Mending is cast on it.</p>" } ] }
+  {
+   "id": "thunderwave",
+   "always": true
   },
-  "features": [
-    { "name": "Magical Tinkering", "text": "Action with tools: give a Tiny nonmagical object light, an odor, a sound, a static image or a 6-second recorded message (up to Int mod objects)." },
-    { "name": "Infuse Item", "text": "8 infusions known, 4 infused items. Plans: +2 Wand of the War Mage, +2 Shield, Cloak of Protection, +1 Armor, Wand of Magic Detection, Manifold Tool." },
-    { "name": "The Right Tool for the Job", "text": "During a rest, spend 1 hour to create a set of artisan's tools." },
-    { "name": "Arcane Firearm", "text": "When you cast an artificer spell through your wand, add 1d8 to one of the spell's damage rolls." },
-    { "name": "Explosive Cannon", "text": "Your cannon's damage rolls increase by 1d8 (included); you can detonate it as an action." },
-    { "name": "Tool Expertise", "text": "Double proficiency with all tools you're proficient with." },
-    { "name": "Magic Item Adept", "text": "Attune to up to 4 magic items; craft common and uncommon items in half the time and cost." },
-    { "name": "Spell Sniper", "text": "Your spells ignore half and three-quarters cover; casting within 5 ft of an enemy doesn't impose disadvantage; spells with a range of 10+ ft gain +60 ft." },
-    { "name": "War Caster", "text": "Advantage on Con saves to keep concentration; somatic components with hands full; cast a one-target action spell instead of an opportunity attack." },
-    { "name": "Tough", "text": "+2 HP per level (included)." },
-    { "name": "Dwarven Resilience", "text": "Resistance to Poison damage; advantage on saves to avoid or end the Poisoned condition." }
-  ],
-  "inventory": [
-    "Wand of the War Mage +2 (attuned)", "Cloak of Protection (attuned)", "Stone of Good Luck (attuned)", "Ring of Protection (attuned)", "Scale mail +1", "+2 Shield",
-    "Bag of Holding", "Wand of Magic Missiles", "Orb of Direction", "Orb of Time", "Thieves' tools", "Tinker's tools", "Woodcarver's tools",
-    "Backpack, bedroll, 2 flasks of oil, 10 days of rations, rope, 10 torches, tinderbox, waterskin"
-  ],
-  "flags": [
-    "Speed: your sheet says 60 ft. A 2024 dwarf has 30 ft and I found nothing on the sheet that doubles it. I kept 60; change it in Party if that's a typo.",
-    "Saves: the sheet's numbers leave out Cloak of Protection (+1), Ring of Protection (+1) and Stone of Good Luck (+1). I added all three, so his saves are 3 higher than the PDF.",
-    "Ability checks: Stone of Good Luck adds +1 to every check, which the sheet's skills leave out. Added.",
-    "Spell attack: the sheet shows +9, but the +2 Wand of the War Mage makes it +11 when he casts through it. I used +11 for his spells; the cannon keeps +9."
-  ]
+  {
+   "id": "scorching-ray",
+   "always": true
+  },
+  {
+   "id": "shatter",
+   "always": true
+  },
+  {
+   "id": "fireball",
+   "always": true
+  },
+  {
+   "id": "wind-wall",
+   "always": true
+  },
+  {
+   "id": "alarm",
+   "prepared": true
+  },
+  {
+   "id": "cure-wounds",
+   "prepared": true
+  },
+  {
+   "id": "detect-magic",
+   "prepared": true
+  },
+  {
+   "id": "feather-fall",
+   "prepared": true
+  },
+  {
+   "id": "identify",
+   "prepared": true
+  },
+  {
+   "id": "blur",
+   "prepared": true
+  },
+  {
+   "id": "dragons-breath",
+   "prepared": true
+  },
+  {
+   "id": "heat-metal",
+   "prepared": true
+  },
+  {
+   "id": "web",
+   "prepared": true
+  },
+  {
+   "id": "glyph-of-warding",
+   "prepared": true
+  },
+  {
+   "id": "revivify",
+   "prepared": true
+  },
+  "disguise-self",
+  "expeditious-retreat",
+  "faerie-fire",
+  "false-life",
+  "grease",
+  "jump",
+  "longstrider",
+  "purify-food-and-drink",
+  "sanctuary",
+  "aid",
+  "alter-self",
+  "arcane-lock",
+  "arcane-vigor",
+  "continual-flame",
+  "darkvision",
+  "enhance-ability",
+  "enlarge-reduce",
+  "invisibility",
+  "lesser-restoration",
+  "levitate",
+  "magic-mouth",
+  "magic-weapon",
+  "protection-from-poison",
+  "rope-trick",
+  "see-invisibility",
+  "spider-climb",
+  "blink",
+  "create-food-and-water",
+  "dispel-magic",
+  {
+   "custom": "elemental-weapon"
+  },
+  "fly",
+  "haste",
+  "protection-from-energy",
+  "water-breathing",
+  "water-walk"
+ ],
+ "customSpells": {
+  "elemental-weapon": {
+   "name": "Elemental Weapon",
+   "level": 3,
+   "school": "Transmutation",
+   "time": "Action",
+   "range": "Touch",
+   "duration": "1 hour",
+   "conc": true,
+   "comp": "VS",
+   "text": "<p>A nonmagical weapon you touch becomes a magic weapon. Choose Acid, Cold, Fire, Lightning or Thunder. The weapon has a +1 bonus to attack rolls and deals an extra 1d4 damage of the chosen type when it hits. <strong>Using a Higher-Level Spell Slot.</strong> Slot 5–6: +2 and 2d4; slot 7+: +3 and 3d4.</p>"
+  }
+ },
+ "resources": [
+  {
+   "id": "cannon",
+   "name": "Eldritch Cannon",
+   "max": 1,
+   "recover": "lr",
+   "note": "Or spend a spell slot to create one"
+  },
+  {
+   "id": "flash",
+   "name": "Flash of Genius",
+   "max": 5,
+   "recover": "lr"
+  },
+  {
+   "id": "storing",
+   "name": "Spell-Storing Item",
+   "max": 10,
+   "recover": "lr"
+  },
+  {
+   "id": "stonecunning",
+   "name": "Stonecunning",
+   "max": 4,
+   "recover": "lr"
+  },
+  {
+   "id": "wand-mm",
+   "name": "Wand of Magic Missiles (charges)",
+   "max": 7,
+   "recover": "dawn"
+  }
+ ],
+ "actions": [
+  {
+   "id": "cannon-create",
+   "name": "Create Eldritch Cannon",
+   "time": "action",
+   "uses": "cannon",
+   "summon": "eldritch-cannon",
+   "text": "Use woodcarver's or smith's tools to create a Small or Tiny cannon in an unoccupied space within 5 ft: Flamethrower, Force Ballista or Protector. It lasts 1 hour, until it drops to 0 HP, or until you dismiss it (action). Once per long rest, or spend a spell slot of level 1+."
+  },
+  {
+   "id": "cannon-ballista",
+   "name": "Cannon: Force Ballista",
+   "time": "bonus",
+   "kind": "spell-attack",
+   "text": "Activate the cannon (bonus action, within 60 ft). Ranged spell attack, 120 ft. Hit: 3d8 Force and the target is pushed 5 ft away.",
+   "attack": {
+    "kind": "ranged",
+    "spell": true,
+    "range": [
+     120,
+     null
+    ],
+    "noFocus": true
+   },
+   "damage": [
+    {
+     "n": 3,
+     "d": 8,
+     "type": "force"
+    }
+   ]
+  },
+  {
+   "id": "cannon-flame",
+   "name": "Cannon: Flamethrower",
+   "time": "bonus",
+   "text": "Activate the cannon: 15-ft Cone from the cannon. Dexterity save; 3d8 Fire on a failure, half on a success. Unattended flammable objects ignite.",
+   "save": {
+    "abil": [
+     "dex"
+    ]
+   },
+   "onSave": "half",
+   "area": {
+    "shape": "cone",
+    "size": 15
+   },
+   "damage": [
+    {
+     "n": 3,
+     "d": 8,
+     "type": "fire"
+    }
+   ]
+  },
+  {
+   "id": "cannon-protector",
+   "name": "Cannon: Protector",
+   "time": "bonus",
+   "text": "Activate the cannon: it and each creature you choose within 10 ft of it gain 1d8 + 5 Temporary Hit Points.",
+   "tempHp": {
+    "f": "1d8+5"
+   }
+  },
+  {
+   "id": "cannon-detonate",
+   "name": "Cannon: Detonate",
+   "time": "action",
+   "text": "Detonate the cannon (within 60 ft): 20-ft-radius Sphere, Dexterity save; 3d8 Force on a failure, half on a success. The cannon is destroyed.",
+   "save": {
+    "abil": [
+     "dex"
+    ]
+   },
+   "onSave": "half",
+   "area": {
+    "shape": "circle",
+    "size": 20
+   },
+   "damage": [
+    {
+     "n": 3,
+     "d": 8,
+     "type": "force"
+    }
+   ]
+  },
+  {
+   "id": "flash",
+   "name": "Flash of Genius",
+   "time": "reaction",
+   "uses": "flash",
+   "text": "When you or a creature within 30 ft makes an ability check or saving throw, add +5 (your Int modifier) to the roll."
+  },
+  {
+   "id": "stonecunning",
+   "name": "Stonecunning",
+   "time": "bonus",
+   "uses": "stonecunning",
+   "text": "Gain Tremorsense 60 ft for 10 minutes while on or touching natural or worked stone.",
+   "selfEffect": {
+    "name": "Tremorsense",
+    "icon": "marked",
+    "rounds": 100
+   }
+  },
+  {
+   "id": "storing",
+   "name": "Spell-Storing Item",
+   "time": "action",
+   "uses": "storing",
+   "text": "A creature holding the infused item casts the stored 1st- or 2nd-level artificer spell using your abilities."
+  },
+  {
+   "id": "wand-mm",
+   "name": "Wand of Magic Missiles",
+   "time": "action",
+   "uses": "wand-mm",
+   "text": "Expend 1+ charges to cast Magic Missile (1 charge = level 1, +1 level per extra charge). Regains 1d6+1 charges at dawn.",
+   "castSpell": "magic-missile"
+  }
+ ],
+ "summons": {
+  "eldritch-cannon": {
+   "name": "Eldritch Cannon",
+   "size": "Small",
+   "squares": 1,
+   "type": "Object",
+   "alignment": "",
+   "ac": 18,
+   "hp": {
+    "max": 60,
+    "formula": "5 × artificer level"
+   },
+   "init": 0,
+   "speed": "15 ft., Climb 15 ft.",
+   "abilities": {
+    "str": 10,
+    "dex": 10,
+    "con": 10,
+    "int": 10,
+    "wis": 10,
+    "cha": 10
+   },
+   "saves": {},
+   "skills": {},
+   "senses": "Passive Perception 10",
+   "languages": "—",
+   "resist": [],
+   "immune": [
+    "Poison",
+    "Psychic"
+   ],
+   "vuln": [],
+   "condImmune": [],
+   "cr": 0,
+   "crText": "—",
+   "xp": 0,
+   "pb": 4,
+   "traits": [
+    {
+     "name": "Creator",
+     "text": "<p>Acts only when Boon activates it (bonus action within 60 ft). Uses Boon's spell attack (+9) and save DC (17). Regains 2d6 HP when Mending is cast on it.</p>"
+    }
+   ]
+  }
+ },
+ "features": [
+  {
+   "name": "Magical Tinkering",
+   "text": "Action with tools: give a Tiny nonmagical object light, an odor, a sound, a static image or a 6-second recorded message (up to Int mod objects)."
+  },
+  {
+   "name": "Infuse Item",
+   "text": "8 infusions known, 4 infused items. Plans: +2 Wand of the War Mage, +2 Shield, Cloak of Protection, +1 Armor, Wand of Magic Detection, Manifold Tool."
+  },
+  {
+   "name": "The Right Tool for the Job",
+   "text": "During a rest, spend 1 hour to create a set of artisan's tools."
+  },
+  {
+   "name": "Arcane Firearm",
+   "text": "When you cast an artificer spell through your wand, add 1d8 to one of the spell's damage rolls."
+  },
+  {
+   "name": "Explosive Cannon",
+   "text": "Your cannon's damage rolls increase by 1d8 (included); you can detonate it as an action."
+  },
+  {
+   "name": "Tool Expertise",
+   "text": "Double proficiency with all tools you're proficient with."
+  },
+  {
+   "name": "Magic Item Adept",
+   "text": "Attune to up to 4 magic items; craft common and uncommon items in half the time and cost."
+  },
+  {
+   "name": "Spell Sniper",
+   "text": "Your spells ignore half and three-quarters cover; casting within 5 ft of an enemy doesn't impose disadvantage; spells with a range of 10+ ft gain +60 ft."
+  },
+  {
+   "name": "War Caster",
+   "text": "Advantage on Con saves to keep concentration; somatic components with hands full; cast a one-target action spell instead of an opportunity attack."
+  },
+  {
+   "name": "Tough",
+   "text": "+2 HP per level (included)."
+  },
+  {
+   "name": "Dwarven Resilience",
+   "text": "Resistance to Poison damage; advantage on saves to avoid or end the Poisoned condition."
+  }
+ ],
+ "inventory": [
+  "Wand of the War Mage +2 (attuned)",
+  "Cloak of Protection (attuned)",
+  "Stone of Good Luck (attuned)",
+  "Ring of Protection (attuned)",
+  "Scale mail +1",
+  "+2 Shield",
+  "Bag of Holding",
+  "Wand of Magic Missiles",
+  "Orb of Direction",
+  "Orb of Time",
+  "Thieves' tools",
+  "Tinker's tools",
+  "Woodcarver's tools",
+  "Backpack, bedroll, 2 flasks of oil, 10 days of rations, rope, 10 torches, tinderbox, waterskin"
+ ],
+ "flags": [
+  "Speed: your sheet says 60 ft. A 2024 dwarf has 30 ft and I found nothing on the sheet that doubles it. I kept 60; change it in Party if that's a typo.",
+  "Saves: the sheet's numbers leave out Cloak of Protection (+1), Ring of Protection (+1) and Stone of Good Luck (+1). I added all three, so his saves are 3 higher than the PDF.",
+  "Ability checks: Stone of Good Luck adds +1 to every check, which the sheet's skills leave out. Added.",
+  "Spell attack: the sheet shows +9, but the +2 Wand of the War Mage makes it +11 when he casts through it. I used +11 for his spells; the cannon keeps +9."
+ ],
+ "token": "Boon Gultor, a dwarf artificer and convict on work release: lean and weathered, a soot-streaked braided brown beard, brass-rimmed goggles pushed up on his brow, scale mail under a tool-laden leather apron, an iron convict's cuff on one wrist, holding a carved wand that crackles with arcane sparks. Wry, tired and clever."
 }

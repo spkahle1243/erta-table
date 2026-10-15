@@ -4,64 +4,400 @@
   "built": "2026-10-14",
   "styleLocks": {
     "art": "Painterly dark-fantasy concept art, deep-mountain noir, cold blue-grey granite and soot-black shadow cut by warm amber lantern light, veins of pale opalescent violet glowing in the stone, drifting rock dust in the air, cinematic composition, highly detailed environment, 16:9 aspect ratio.",
-    "map": "Top-down orthographic fantasy battle map for a virtual tabletop, hand-painted digital illustration, lush and intricately detailed, saturated jewel-tone palette with deep contrasting shadows, dramatic glowing light sources casting colored pools of light, rich textures on stone, timber, moss and water, crisp readable shapes that stay clear under tokens, flat overhead view with no perspective tilt, medieval fantasy setting."
+    "map": "Top-down orthographic fantasy battle map for a virtual tabletop, hand-painted digital illustration, lush and intricately detailed, saturated jewel-tone palette with deep contrasting shadows, dramatic glowing light sources casting colored pools of light, rich textures on stone, timber, moss and water, crisp readable shapes that stay clear under tokens, flat overhead view with no perspective tilt, medieval fantasy setting.",
+    "token": "Painterly dark-fantasy token portrait for a virtual tabletop, deep-mountain noir palette: cold blue-grey shadow, warm amber rim light, drifting dust. Head and shoulders (or the creature's head and upper body) centred and facing the viewer, the whole subject inside a central circle with a little margin, plain dark smoky background, square 1:1 image, no border, no ring, no text, no watermark."
   },
-  "clockContainers": { "dawnclock": "dawn", "clocks": "corvane,grudge" },
+  "clockContainers": {
+    "dawnclock": "dawn",
+    "clocks": "corvane,grudge"
+  },
   "clocks": [
-    { "key": "dawn", "name": "Until Dawn", "size": 8, "start": 0, "visible": true, "goal": "One segment per hour. At 8, Ammaskar sits up and the Gate recalls Boon.",
-      "steps": { "2": "Midnight tremor: a lift-cage jams; Scene 3 rescue DCs +2 if the miners are still trapped.", "4": "The town panics. Mayor Durrin decides to hand Boon to the giants at dawn.", "6": "Dorn goes down on his own. Go to Scene 5 now.", "7": "Kolgrim starts singing the mountain down (unless faced down). Scene 5 loses a round.", "8": "Dawn. Ammaskar sits up; the Gate recalls Boon." } },
-    { "key": "corvane", "name": "Corvane, the Hush Merchant", "size": 6, "start": 1, "visible": false, "goal": "Sell Haldra’s pact ring and the way into Dhurak-Ul" },
-    { "key": "grudge", "name": "Bagathorn’s Grudge", "size": 6, "start": 3, "visible": false, "goal": "The town turns on Ironclad and the Gultors" }
+    {
+      "key": "dawn",
+      "name": "Until Dawn",
+      "size": 8,
+      "start": 0,
+      "visible": true,
+      "goal": "One segment per hour. At 8, Ammaskar sits up and the Gate recalls Boon.",
+      "steps": {
+        "2": "Midnight tremor: a lift-cage jams; Scene 3 rescue DCs +2 if the miners are still trapped.",
+        "4": "The town panics. Mayor Durrin decides to hand Boon to the giants at dawn.",
+        "6": "Dorn goes down on his own. Go to Scene 5 now.",
+        "7": "Kolgrim starts singing the mountain down (unless faced down). Scene 5 loses a round.",
+        "8": "Dawn. Ammaskar sits up; the Gate recalls Boon."
+      }
+    },
+    {
+      "key": "corvane",
+      "name": "Corvane, the Hush Merchant",
+      "size": 6,
+      "start": 1,
+      "visible": false,
+      "goal": "Sell Haldra’s pact ring and the way into Dhurak-Ul"
+    },
+    {
+      "key": "grudge",
+      "name": "Bagathorn’s Grudge",
+      "size": 6,
+      "start": 3,
+      "visible": false,
+      "goal": "The town turns on Ironclad and the Gultors"
+    }
   ],
   "actors": {
-    "starving-xorn": { "base": "xorn", "name": "Starving Xorn",
-      "notes": "<p>Starving, driven up from below. Goes for whoever carries the most gems and metal (Vali’s mithral and Sun Blade, Orek’s jeweler’s kit). <b>Flees into the rock at 25 HP or less.</b> A tossed gem, ring or 50+ gp (bonus action) makes the nearest xorn spend its next turn eating it. A crit on Vali chews his mithral: −1 AC until repaired. Tremorsense (Boon, Orek) cancels its advantage for surfacing next to a target.</p>" },
-    "dream-guardian": { "base": "earth-elemental", "name": "Dream-Guardian",
-      "add": { "traits": [ { "name": "Dream-Laden Blows", "text": "<p>A creature hit by the guardian’s Slam makes a DC 13 Wisdom saving throw or can’t take Reactions until the start of its next turn.</p>" } ] },
-      "notes": "<p>Steps out of the sealing wall. Moves through it freely and withdraws into it at half HP; drives intruders off and doesn’t chase. Vali holding up the rune-token stops them (Scene 3) or turns them on Dorn (Scene 5).</p>" },
-    "stone-servant": { "base": "earth-elemental", "name": "Stone Servant",
-      "notes": "<p>Pulled out of the apron by Kolgrim’s note. Tries to shove PCs out of the ring and into the coal-cart fire. Crumbles to gravel the moment Kolgrim yields.</p>" },
-    "kolgrim": { "base": "stone-giant", "name": "Kolgrim",
-      "set": { "hp": { "max": 200, "formula": "ritual duel" } },
-      "add": { "reactions": [ { "name": "Rock Catching", "text": "<p>When a rock or similar object is hurled at Kolgrim, he makes a DC 10 Dexterity saving throw; on a success he catches it and takes no Bludgeoning damage from it.</p>" } ] },
-      "notes": "<p><b>A ritual, not a murder.</b> Yields at 100 HP and sits down hard; the servants collapse. A PC dropped to 0 is stable. Lost if the party yields or two of them are down. Opens with the boulder at whoever looks smallest; saves Vali-in-Large-Form for last.</p>" },
-    "thrunna": { "base": "stone-giant", "name": "Thrunna Stonesinger", "notes": "<p>Never joins a fight. Speaks only Giant; the speaker who opens a conversation owns its end.</p>" },
-    "hushed": { "base": "assassin", "name": "The Hushed",
-      "add": { "traits": [ { "name": "Hush of the Deep", "text": "<p>The Hushed makes no sound and has Advantage on Dexterity (Stealth) checks. A creature with Tremorsense (Boon, Orek with Stonecunning) still feels its steps on stone.</p>" } ] },
-      "notes": "<p>Corvane’s agents. They want <b>the Eye</b>, not the party: round 1, one goes for Dorn. Grabbing the Eye burns them too (3d10 Psychic), so they try to drag Dorn to the slit. At the end of round 3 the stone takes Dorn; survivors fight one more round, then go out the slit on grapnels. A captured one talks (DC 15 Intimidation).</p>" },
-    "dorn": { "base": "mage", "name": "Dorn, Stone-Wed",
-      "set": { "ac": 16, "hp": { "max": 150, "formula": "the mountain mends him" }, "cr": 10, "crText": "10", "xp": 5900, "pb": 4, "resist": ["Bludgeoning", "Piercing", "Slashing"], "spellDC": 16 },
-      "remove": { "actions": ["Multiattack", "Arcane Burst", "Spellcasting"], "bonus": ["Misty Step (3/Day)"], "reactions": ["Protective Magic (3/Day)"] },
+    "starving-xorn": {
+      "base": "xorn",
+      "name": "Starving Xorn",
+      "notes": "<p>Starving, driven up from below. Goes for whoever carries the most gems and metal (Vali’s mithral and Sun Blade, Orek’s jeweler’s kit). <b>Flees into the rock at 25 HP or less.</b> A tossed gem, ring or 50+ gp (bonus action) makes the nearest xorn spend its next turn eating it. A crit on Vali chews his mithral: −1 AC until repaired. Tremorsense (Boon, Orek) cancels its advantage for surfacing next to a target.</p>",
+      "token": "A starving xorn: a squat, three-legged elemental of cracked grey stone with three long clawed arms, a huge round mouth on top of its head ringed with grinding rock teeth, and three unblinking amber eyes around its crown. Gaunt, ribbed hide flecked with veins of ore, flakes of rock falling away. Ravenous and desperate."
+    },
+    "dream-guardian": {
+      "base": "earth-elemental",
+      "name": "Dream-Guardian",
       "add": {
         "traits": [
-          { "name": "Legendary Resistance (2/Day)", "text": "<p>If Dorn fails a saving throw, he can choose to succeed instead. The Eye refuses to let him fail.</p>" },
-          { "name": "Can’t Let Go", "text": "<p>Dorn never drops the Eye on his own. Disarming Attack, a grapple contest (his Athletics +2), dropping him to 0 HP or Boon’s talk-down are the ways to get it. Taking the Eye ends his fight.</p>" },
-          { "name": "Stone to the Heart", "text": "<p>At 75 HP the floor raises Dorn on a 10-foot pillar: half cover from below, DC 14 Athletics to climb, he loses Stone Step, Dream-Shard becomes three bolts, and he gains a Reaction to bolt anyone who climbs on.</p>" }
+          {
+            "name": "Dream-Laden Blows",
+            "text": "<p>A creature hit by the guardian’s Slam makes a DC 13 Wisdom saving throw or can’t take Reactions until the start of its next turn.</p>"
+          }
+        ]
+      },
+      "notes": "<p>Steps out of the sealing wall. Moves through it freely and withdraws into it at half HP; drives intruders off and doesn’t chase. Vali holding up the rune-token stops them (Scene 3) or turns them on Dorn (Scene 5).</p>",
+      "token": "A dream-guardian: a tall humanoid figure of smooth dark granite half-stepping out of a rune-carved wall, faint opalescent violet runes glowing across its chest and arms, its face a calm featureless mask with closed, sleeping eyes. Serene, ancient and immovable."
+    },
+    "stone-servant": {
+      "base": "earth-elemental",
+      "name": "Stone Servant",
+      "notes": "<p>Pulled out of the apron by Kolgrim’s note. Tries to shove PCs out of the ring and into the coal-cart fire. Crumbles to gravel the moment Kolgrim yields.</p>",
+      "token": "A stone servant: a blunt, crude humanoid heaved up out of rough grey rock and coal-dust gravel, no face at all, lumpy shoulders, arms like broken columns, loose stones trickling from its joints. Heavy, mindless and obedient."
+    },
+    "kolgrim": {
+      "base": "stone-giant",
+      "name": "Kolgrim",
+      "set": {
+        "hp": {
+          "max": 200,
+          "formula": "ritual duel"
+        }
+      },
+      "add": {
+        "reactions": [
+          {
+            "name": "Rock Catching",
+            "text": "<p>When a rock or similar object is hurled at Kolgrim, he makes a DC 10 Dexterity saving throw; on a success he catches it and takes no Bludgeoning damage from it.</p>"
+          }
+        ]
+      },
+      "notes": "<p><b>A ritual, not a murder.</b> Yields at 100 HP and sits down hard; the servants collapse. A PC dropped to 0 is stable. Lost if the party yields or two of them are down. Opens with the boulder at whoever looks smallest; saves Vali-in-Large-Form for last.</p>",
+      "token": "Kolgrim, a young stone giant: hulking and broad, skin of grey granite with pale quartz flecks, a heavy jaw split by a big delighted laugh, dark hair in thick braids threaded with river stones, a boulder the size of a cart balanced on one shoulder. Coal dust and firelight. Boisterous, proud and itching for a fight."
+    },
+    "thrunna": {
+      "base": "stone-giant",
+      "name": "Thrunna Stonesinger",
+      "notes": "<p>Never joins a fight. Speaks only Giant; the speaker who opens a conversation owns its end.</p>",
+      "token": "Thrunna Stonesinger, an ancient female stone giant: skin grey and deeply creased like weathered granite, pale river-stone eyes, long white hair bound with carved stone rings, one fingertip carving a small glowing rune into the air. Grave, patient and absolute."
+    },
+    "hushed": {
+      "base": "assassin",
+      "name": "The Hushed",
+      "add": {
+        "traits": [
+          {
+            "name": "Hush of the Deep",
+            "text": "<p>The Hushed makes no sound and has Advantage on Dexterity (Stealth) checks. A creature with Tremorsense (Boon, Orek with Stonecunning) still feels its steps on stone.</p>"
+          }
+        ]
+      },
+      "notes": "<p>Corvane’s agents. They want <b>the Eye</b>, not the party: round 1, one goes for Dorn. Grabbing the Eye burns them too (3d10 Psychic), so they try to drag Dorn to the slit. At the end of round 3 the stone takes Dorn; survivors fight one more round, then go out the slit on grapnels. A captured one talks (DC 15 Intimidation).</p>",
+      "token": "One of the Hushed, a silent assassin: slim figure in close-fitting charcoal leathers and a deep hood, face hidden behind a smooth pale porcelain mask with no mouth, one gloved finger raised to where the lips would be, a thin blackened shortsword. Eerie, quiet and deadly."
+    },
+    "dorn": {
+      "base": "mage",
+      "name": "Dorn, Stone-Wed",
+      "set": {
+        "ac": 16,
+        "hp": {
+          "max": 150,
+          "formula": "the mountain mends him"
+        },
+        "cr": 10,
+        "crText": "10",
+        "xp": 5900,
+        "pb": 4,
+        "resist": [
+          "Bludgeoning",
+          "Piercing",
+          "Slashing"
+        ],
+        "spellDC": 16
+      },
+      "remove": {
+        "actions": [
+          "Multiattack",
+          "Arcane Burst",
+          "Spellcasting"
+        ],
+        "bonus": [
+          "Misty Step (3/Day)"
+        ],
+        "reactions": [
+          "Protective Magic (3/Day)"
+        ]
+      },
+      "add": {
+        "traits": [
+          {
+            "name": "Legendary Resistance (2/Day)",
+            "text": "<p>If Dorn fails a saving throw, he can choose to succeed instead. The Eye refuses to let him fail.</p>"
+          },
+          {
+            "name": "Can’t Let Go",
+            "text": "<p>Dorn never drops the Eye on his own. Disarming Attack, a grapple contest (his Athletics +2), dropping him to 0 HP or Boon’s talk-down are the ways to get it. Taking the Eye ends his fight.</p>"
+          },
+          {
+            "name": "Stone to the Heart",
+            "text": "<p>At 75 HP the floor raises Dorn on a 10-foot pillar: half cover from below, DC 14 Athletics to climb, he loses Stone Step, Dream-Shard becomes three bolts, and he gains a Reaction to bolt anyone who climbs on.</p>"
+          }
         ],
         "actions": [
-          { "name": "Multiattack", "text": "<p>Dorn makes two Dream-Shard attacks (three while on the pillar).</p>" },
-          { "name": "Dream-Shard", "text": "<p><em>Ranged Spell Attack Roll:</em> +8, range 90 ft. <em>Hit:</em> 13 (3d8) Psychic damage.</p>",
-            "auto": [ { "type": "attack", "time": "action", "attack": { "bonus": 8, "kind": "ranged", "spell": true, "range": [90, null] }, "damage": [ { "n": 3, "d": 8, "b": 0, "type": "psychic", "f": "3d8" } ] } ] },
-          { "name": "Wall of Stone (1/Day)", "text": "<p>Dorn casts <em>Wall of Stone</em> (spell save DC 16).</p>", "uses": 1 },
-          { "name": "Flesh to Stone (1/Day)", "text": "<p>Dorn casts <em>Flesh to Stone</em> (spell save DC 16).</p>", "uses": 1 },
-          { "name": "The Mountain Shrugs (1/Day)", "text": "<p><em>Dexterity Saving Throw:</em> DC 16, each creature in a 15-foot-radius Sphere Dorn can see. <em>Failure:</em> 10 (3d6) Bludgeoning damage and the target has the Prone condition. <em>Success:</em> Half damage only.</p>", "uses": 1,
-            "auto": [ { "type": "save", "time": "action", "save": { "abil": ["dex"], "dc": 16 }, "onSave": "half", "damage": [ { "n": 3, "d": 6, "b": 0, "type": "bludgeoning", "f": "3d6" } ], "area": { "shape": "circle", "size": 15 }, "applies": ["prone"] } ] }
+          {
+            "name": "Multiattack",
+            "text": "<p>Dorn makes two Dream-Shard attacks (three while on the pillar).</p>"
+          },
+          {
+            "name": "Dream-Shard",
+            "text": "<p><em>Ranged Spell Attack Roll:</em> +8, range 90 ft. <em>Hit:</em> 13 (3d8) Psychic damage.</p>",
+            "auto": [
+              {
+                "type": "attack",
+                "time": "action",
+                "attack": {
+                  "bonus": 8,
+                  "kind": "ranged",
+                  "spell": true,
+                  "range": [
+                    90,
+                    null
+                  ]
+                },
+                "damage": [
+                  {
+                    "n": 3,
+                    "d": 8,
+                    "b": 0,
+                    "type": "psychic",
+                    "f": "3d8"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "Wall of Stone (1/Day)",
+            "text": "<p>Dorn casts <em>Wall of Stone</em> (spell save DC 16).</p>",
+            "uses": 1
+          },
+          {
+            "name": "Flesh to Stone (1/Day)",
+            "text": "<p>Dorn casts <em>Flesh to Stone</em> (spell save DC 16).</p>",
+            "uses": 1
+          },
+          {
+            "name": "The Mountain Shrugs (1/Day)",
+            "text": "<p><em>Dexterity Saving Throw:</em> DC 16, each creature in a 15-foot-radius Sphere Dorn can see. <em>Failure:</em> 10 (3d6) Bludgeoning damage and the target has the Prone condition. <em>Success:</em> Half damage only.</p>",
+            "uses": 1,
+            "auto": [
+              {
+                "type": "save",
+                "time": "action",
+                "save": {
+                  "abil": [
+                    "dex"
+                  ],
+                  "dc": 16
+                },
+                "onSave": "half",
+                "damage": [
+                  {
+                    "n": 3,
+                    "d": 6,
+                    "b": 0,
+                    "type": "bludgeoning",
+                    "f": "3d6"
+                  }
+                ],
+                "area": {
+                  "shape": "circle",
+                  "size": 15
+                },
+                "applies": [
+                  "prone"
+                ]
+              }
+            ]
+          }
         ],
-        "bonus": [ { "name": "Stone Step", "text": "<p>Dorn sinks into the floor and rises from any stone within 30 feet.</p>" } ],
-        "reactions": [ { "name": "Mountain’s Shield", "text": "<p><em>Trigger:</em> Dorn is hit by an attack roll. <em>Response:</em> +5 AC against that attack.</p>" } ]
+        "bonus": [
+          {
+            "name": "Stone Step",
+            "text": "<p>Dorn sinks into the floor and rises from any stone within 30 feet.</p>"
+          }
+        ],
+        "reactions": [
+          {
+            "name": "Mountain’s Shield",
+            "text": "<p><em>Trigger:</em> Dorn is hit by an attack roll. <em>Response:</em> +5 AC against that attack.</p>"
+          }
+        ]
       },
-      "notes": "<p>Mage reskin (CR ~10). <b>Doesn’t have to die:</b> taking the Eye from him ends his fight. Kolgrim (if his test was won) gets one free Greatclub hit on him each round from round 3: 3d8 + 6.</p>" }
+      "notes": "<p>Mage reskin (CR ~10). <b>Doesn’t have to die:</b> taking the Eye from him ends his fight. Kolgrim (if his test was won) gets one free Greatclub hit on him each round from round 3: 3d8 + 6.</p>",
+      "token": "Dorn Gultor, Stone-Wed: a handsome dwarf wizard half turned to living stone, grey stone veins climbing from his throat across one side of his face, his braided beard beaded with silver, a torn deep-blue velvet coat, and a fist-sized black gem with moving violet lights blazing through the cloth over his heart. Terrified and furious."
+    }
   },
   "encounters": [
-    { "key": "kolgrims-test", "name": "Kolgrim’s Test", "section": "s2", "scene": "map-the-deepdelve-pithead", "xp": 8300, "difficulty": "Low–Moderate", "anchor": "#e2 .enc",
-      "groups": [ { "label": "The duel", "foes": [ { "actor": "kolgrim", "count": 1 }, { "actor": "stone-servant", "count": 3 } ] } ] },
-    { "key": "hunger-in-the-walls", "name": "Hunger in the Walls", "section": "s3", "scene": "map-the-ninth-gallery", "xp": 7200, "difficulty": "Low+", "anchor": "#s3 .enc",
-      "groups": [ { "label": "Three from the walls", "foes": [ { "actor": "starving-xorn", "count": 3 } ] }, { "label": "Round 3: the fourth, on the miners’ side", "foes": [ { "actor": "starving-xorn", "count": 1, "name": "Starving Xorn 4" } ] } ] },
-    { "key": "dream-guardians", "name": "The Dream-Guardians", "section": "s3", "scene": "map-the-ninth-gallery", "xp": 3600, "difficulty": "second wave", "anchor": "#guardians ~ .branch",
-      "groups": [ { "label": "From the sealing wall", "foes": [ { "actor": "dream-guardian", "count": 2 } ] } ] },
-    { "key": "the-hushed", "name": "The Hushed", "section": "s4", "scene": "map-dorn-s-study-under-the-dome", "xp": 11700, "difficulty": "Moderate", "anchor": "#e4 .enc",
-      "groups": [ { "label": "Out of the dark", "foes": [ { "actor": "hushed", "count": 3 } ] }, { "label": "Dorn (defends himself only)", "foes": [ { "actor": "dorn", "count": 1, "name": "Dorn Gultor", "disposition": "neutral" } ] } ] },
-    { "key": "the-sleeper-wakes", "name": "The Sleeper Wakes", "section": "s5", "scene": "map-the-hall-of-ammaskar", "xp": 9500, "difficulty": "High", "anchor": "#s5 .lock",
-      "groups": [ { "label": "Dorn at her hand", "foes": [ { "actor": "dorn", "count": 1 } ] }, { "label": "Dream-guardians", "foes": [ { "actor": "dream-guardian", "count": 2 } ] }, { "label": "Kolgrim (ally, if his test was won)", "foes": [ { "actor": "kolgrim", "count": 1, "disposition": "friendly" } ] } ] }
+    {
+      "key": "kolgrims-test",
+      "name": "Kolgrim’s Test",
+      "section": "s2",
+      "scene": "map-the-deepdelve-pithead",
+      "xp": 8300,
+      "difficulty": "Low–Moderate",
+      "anchor": "#e2 .enc",
+      "groups": [
+        {
+          "label": "The duel",
+          "foes": [
+            {
+              "actor": "kolgrim",
+              "count": 1
+            },
+            {
+              "actor": "stone-servant",
+              "count": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "hunger-in-the-walls",
+      "name": "Hunger in the Walls",
+      "section": "s3",
+      "scene": "map-the-ninth-gallery",
+      "xp": 7200,
+      "difficulty": "Low+",
+      "anchor": "#s3 .enc",
+      "groups": [
+        {
+          "label": "Three from the walls",
+          "foes": [
+            {
+              "actor": "starving-xorn",
+              "count": 3
+            }
+          ]
+        },
+        {
+          "label": "Round 3: the fourth, on the miners’ side",
+          "foes": [
+            {
+              "actor": "starving-xorn",
+              "count": 1,
+              "name": "Starving Xorn 4"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "dream-guardians",
+      "name": "The Dream-Guardians",
+      "section": "s3",
+      "scene": "map-the-ninth-gallery",
+      "xp": 3600,
+      "difficulty": "second wave",
+      "anchor": "#guardians ~ .branch",
+      "groups": [
+        {
+          "label": "From the sealing wall",
+          "foes": [
+            {
+              "actor": "dream-guardian",
+              "count": 2
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "the-hushed",
+      "name": "The Hushed",
+      "section": "s4",
+      "scene": "map-dorn-s-study-under-the-dome",
+      "xp": 11700,
+      "difficulty": "Moderate",
+      "anchor": "#e4 .enc",
+      "groups": [
+        {
+          "label": "Out of the dark",
+          "foes": [
+            {
+              "actor": "hushed",
+              "count": 3
+            }
+          ]
+        },
+        {
+          "label": "Dorn (defends himself only)",
+          "foes": [
+            {
+              "actor": "dorn",
+              "count": 1,
+              "name": "Dorn Gultor",
+              "disposition": "neutral"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "the-sleeper-wakes",
+      "name": "The Sleeper Wakes",
+      "section": "s5",
+      "scene": "map-the-hall-of-ammaskar",
+      "xp": 9500,
+      "difficulty": "High",
+      "anchor": "#s5 .lock",
+      "groups": [
+        {
+          "label": "Dorn at her hand",
+          "foes": [
+            {
+              "actor": "dorn",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "label": "Dream-guardians",
+          "foes": [
+            {
+              "actor": "dream-guardian",
+              "count": 2
+            }
+          ]
+        },
+        {
+          "label": "Kolgrim (ally, if his test was won)",
+          "foes": [
+            {
+              "actor": "kolgrim",
+              "count": 1,
+              "disposition": "friendly"
+            }
+          ]
+        }
+      ]
+    }
   ]
 }

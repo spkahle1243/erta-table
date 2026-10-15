@@ -8,6 +8,7 @@ import { assets } from './store.js';
 import { newScene, newToken } from './model.js';
 import { ICONS, modal } from './ui.js';
 import { renderStatBlock } from './statblock.js';
+import { artFor } from './imagekit.js';
 
 export const actorKey = (packId, key) => `pack:${packId}:${key}`;
 
@@ -101,6 +102,7 @@ export function paneprep(ctx) {
   const pack = c.packs?.[c.activePack] || packs[0];
   const loader = el('div', { class: 'row' },
     el('button', { class: 'btn small', type: 'button', onclick: () => loadPackDialog(ctx) }, packs.length ? 'Load another pack…' : 'Load a session pack…'),
+    el('button', { class: 'btn small copper', type: 'button', title: 'Make token art, battle maps, scene art and portraits with Gemini', onclick: () => ctx.imageKit?.() }, 'Image Kit…'),
     packs.length > 1 ? (() => { const s = el('select', { style: { width: 'auto' } }, packs.map(p => el('option', { value: p.id, selected: p.id === pack?.id }, p.title))); s.addEventListener('change', () => ctx.change(cc => { cc.activePack = s.value; })); return s; })() : null);
   if (!pack) {
     wrap.append(el('h3', {}, 'Session prep'), el('p', { class: 'small muted' }, 'A session pack brings your prep into the table: every scene and battle map ready for its image, the soundtrack slots, handouts you can push to players, stat blocks, encounters you can drop onto the map, and the case clocks.'), loader);
@@ -142,6 +144,16 @@ function enhance(doc, pack, ctx) {
       el('button', { class: 'btn small', type: 'button', onclick: () => ctx.viewScene(sc.id) }, 'Open scene'),
       sc.id === c.activeSceneId ? el('span', { class: 'chip', style: { color: 'var(--jade)' } }, 'live') : el('button', { class: 'btn small primary', type: 'button', onclick: () => ctx.activate(sc.id) }, 'Show players'));
     d.after(bar);
+  }
+  // Portrait prompts: once the Image Kit has made the portrait, show it to players
+  for (const d of doc.querySelectorAll('details.art')) {
+    const m = (d.querySelector('summary')?.textContent || '').match(/Portrait prompt\s*·\s*(.+?)\s*(\(|Copy|$)/);
+    if (!m) continue;
+    const key = 'portrait:' + m[1].toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const ho = c.handouts.find(h => h.pack === pack.id && h.packKey === key);
+    d.after(el('div', { class: 'pack-bar' },
+      el('span', { class: 'small ' + (ho?.img ? 'ok' : 'need') }, ho?.img ? '✓ portrait made' : 'no portrait yet (Image Kit)'),
+      ho?.img ? el('button', { class: 'btn small primary', type: 'button', onclick: () => ctx.showHandout({ ...ho, at: Date.now() }) }, 'Show players') : null));
   }
   // Soundtrack prompts: play or attach
   for (const d of doc.querySelectorAll('details[data-music]')) {
@@ -243,7 +255,7 @@ export function encounterTokens(c, pack, enc, groupIndex, center, grid) {
       const sz = Math.max(1, Math.round(a.squares || 1));
       const name = f.name || (f.count > 1 || g.foes.length > 1 ? `${a.name} ${n + 1}` : a.name);
       out.push(newToken({
-        name, actorId: actorKey(pack.id, f.actor), hp: { value: a.hp.max, max: a.hp.max, temp: 0 }, ac: a.ac, init: a.init, size: sz,
+        name, actorId: actorKey(pack.id, f.actor), img: artFor(c, actorKey(pack.id, f.actor)), hp: { value: a.hp.max, max: a.hp.max, temp: 0 }, ac: a.ac, init: a.init, size: sz,
         disposition: f.disposition || 'hostile', hidden: true,
         x: center.cx + (i % 4) * Math.max(1, sz) - 1, y: center.cy + Math.floor(i / 4) * Math.max(1, sz) + 1,
       }));

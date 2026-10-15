@@ -366,6 +366,7 @@ export class SheetWindow {
     const open = [...this.el.querySelectorAll('details')].map((d, i) => (d.open ? i : -1)).filter(i => i >= 0);
     const sameTab = this.lastTab === (this.ui.tab || 'actions');
     this.el.innerHTML = '';
+    this.el.style.setProperty('--pc', v.ch.color || '');
     let sheetEl;
     try { sheetEl = renderSheet(v, this.H, this.ui); }
     catch (e) { console.error(e); sheetEl = el('div', { class: 'sh-head' }, el('p', {}, 'This sheet couldn’t be drawn: ' + e.message)); }

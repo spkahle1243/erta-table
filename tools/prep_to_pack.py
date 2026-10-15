@@ -190,6 +190,7 @@ def main(page_path, cfg_path, srd_path, out_path):
         else:
             actors[key] = a['actor']
         actors[key]['id'] = key
+        if a.get('token'): actors[key]['token'] = a['token']  # token-art subject for the Image Kit
 
     out_sections = [{'id': s['id'], 'title': s['title'], 'num': s['num'], 'html': str(s['node'])} for s in sections]
     pack = {

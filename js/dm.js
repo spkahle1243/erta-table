@@ -15,6 +15,7 @@ import { loadBestiary, searchBestiary, renderStatBlock } from './statblock.js';
 import { importPack, paneprep, actorModal, encounterTokens, clockWidget } from './prep.js';
 import { Engine, actorFor, sheetNumbers } from './rules.js';
 import { SheetWindow, AREA_SHAPE, needsTarget } from './sheet.js';
+import { imageKitDialog, importZip, listenForKit, artFor } from './imagekit.js';
 
 const DM_COLOR = '#E5916A';
 
@@ -92,6 +93,7 @@ async function openCampaign(id) {
   makeEngine();
   startHost();
   autoAttachSheets();
+  listenForKit(kitCtx);
   S.audio = new AudioEngine(id => assets.url(id));
   const vols = await kv.get('dm-volumes'); if (vols) Object.assign(S.audio.vol, vols);
   const unlock = () => { S.audio.unlock(); syncAudio(); window.removeEventListener('pointerdown', unlock, true); window.removeEventListener('keydown', unlock, true); };
@@ -611,6 +613,7 @@ async function dropFiles(files, wx, wy) {
   const sc = scene();
   for (const f of files) {
     if (f.type.startsWith('audio/')) { await addTracks([f]); continue; }
+    if (/\.zip$/i.test(f.name) || /zip/.test(f.type)) { await importZip(kitCtx(), f); continue; }
     if (!f.type.startsWith('image/')) continue;
     if (!sc) { toast('Make a scene first', 'bad'); return; }
     if (!sc.bg) { await setBackground(sc, f); continue; }
@@ -677,6 +680,7 @@ function panePrep() {
     showHandout: h => { change(c => { c.handout = h; }); toast('Showing to players'); },
     loadPack,
     placeEncounter: (pack, enc, gi) => placeEncounter(pack, enc, gi),
+    imageKit: () => imageKitDialog(kitCtx()),
     openActor: id => { const a = S.camp.actors[id]; if (a) actorModal(a, (f, label) => dmRoll(f, { label })); },
   });
 }
@@ -909,7 +913,8 @@ function addTokenDialog(sc) {
     const base = name.value.trim() || 'Creature', sz = +size.value;
     let actorId = null;
     if (picked) { actorId = 'srd:' + picked.id; S.camp.actors[actorId] ||= picked; }
-    change(() => { for (let i = 0; i < n; i++) sc.tokens.push(newToken({ name: n > 1 ? `${base} ${i + 1}` : base, img, actorId, init: +init.value || 0, hp: { value: +hp.value || 1, max: +hp.value || 1, temp: 0 }, ac: +ac.value || 10, size: sz, disposition: disp.value, hidden: hidden.checked, x: cx + (i % 4) * sz, y: cy + Math.floor(i / 4) * sz })); });
+    const art = img || artFor(S.camp, actorId);
+    change(() => { for (let i = 0; i < n; i++) sc.tokens.push(newToken({ name: n > 1 ? `${base} ${i + 1}` : base, img: art, actorId, init: +init.value || 0, hp: { value: +hp.value || 1, max: +hp.value || 1, temp: 0 }, ac: +ac.value || 10, size: sz, disposition: disp.value, hidden: hidden.checked, x: cx + (i % 4) * sz, y: cy + Math.floor(i / 4) * sz })); });
   } }] });
 }
 
@@ -1479,7 +1484,7 @@ function summon(A, key) {
   S.camp.actors[actorId] = spec;
   sc.tokens = sc.tokens.filter(t => t.actorId !== actorId);
   const tok = newToken({ name: spec.name, actorId, hp: { value: spec.hp.max, max: spec.hp.max, temp: 0 }, ac: spec.ac, size: Math.max(1, Math.round(spec.squares || 1)), disposition: 'friendly', x: A.token.x + (A.token.size || 1), y: A.token.y });
-  tok.owner = A.char.id; tok.color = A.char.color;
+  tok.owner = A.char.id; tok.color = A.char.color; tok.img = artFor(S.camp, actorId);
   sc.tokens.push(tok);
   const c = S.camp.combat;
   if (c && c.sceneId === sc.id) { const i = c.list.findIndex(x => x.charId === A.char.id); const cb = tokenCombatant(sc, tok); cb.init = c.list[i]?.init ?? null; c.list.splice(i + 1, 0, cb); }
@@ -1513,3 +1518,5 @@ function onRulesMessage(pid, m, info) {
     }
   }
 }
+
+function kitCtx() { return { camp: S.camp, change: (fn, o) => change(fn, o), setBackground, renderPanel }; }

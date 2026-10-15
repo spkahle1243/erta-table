@@ -425,3 +425,7 @@ span.clock-chip { cursor: default; }
 .sh-inv { margin: 0; padding-left: 18px; font-size: 13px; display: grid; gap: 2px; }
 .sh-opts select, .sh-opts input[type=number] { width: 100%; }
 @media (max-width: 900px) { .sheet-win.dm, .sheet-win.player { right: 8px; left: 8px; width: auto; } }
+
+/* ---------- Image Kit dialog */
+.kit-dlg .kit-way { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 6px; background: var(--bg); }
+.kit-dlg .kit-way h4 { font-family: var(--display); font-size: 17px; }
