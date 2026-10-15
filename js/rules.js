@@ -74,7 +74,9 @@ export function actorFor(camp, scene, token) {
     acBase: token.ac, resist: low(a?.resist), immune: low(a?.immune), vuln: low(a?.vuln), condImmune: low(a?.condImmune),
     traits: [...['traits', 'actions', 'bonus', 'reactions'].flatMap(k => (a?.[k] || []).map(e => e.name.toLowerCase()))],
     friendly: token.disposition === 'friendly', type: (a?.type || '').toLowerCase(), size: token.size || 1,
-    spellAttack: a ? mod(ab[a.spellAbility || 'int']) + a.pb : 0, spellDC: a?.spellDC || 10,
+    spellDC: a?.spellDC || (a ? 8 + mod(ab[a.spellAbility || 'int']) + a.pb : 10),
+    spellAttack: a?.spellDC ? a.spellDC - 8 : a ? mod(ab[a.spellAbility || 'int']) + a.pb : 0,
+    spellMod: a ? mod(ab[a.spellAbility || 'int']) : 0,
   };
 }
 const low = l => (l || []).map(x => String(x).toLowerCase());
@@ -111,7 +113,7 @@ export class Engine {
   // ---------------------------------------------------------------- d20 tests
 
   // Advantage/disadvantage and flat penalties for an attack from A against T.
-  attackMode(A, T, kind, dist) {
+  attackMode(A, T, kind, dist, spell = false) {
     const adv = [], dis = [];
     const ac = condsOf(A), tc = condsOf(T);
     if (ac.includes('invisible')) adv.push('unseen');
@@ -119,7 +121,7 @@ export class Engine {
     if (tc.includes('invisible')) dis.push('target unseen');
     for (const c of ['blinded', 'paralyzed', 'restrained', 'stunned', 'unconscious', 'petrified']) if (tc.includes(c)) adv.push('target ' + c);
     if (tc.includes('prone')) (kind === 'melee' && dist <= 5 ? adv : dis).push('target prone');
-    if (kind === 'ranged' && dist <= 5 && this.hostilesNear(A, 5).length) dis.push('in melee');
+    if (kind === 'ranged' && dist <= 5 && this.hostilesNear(A, 5).length && !(spell && A.traits.includes('spell sniper'))) dis.push('in melee');
     for (const e of T.effects || []) {
       if (e.mods?.advFrom && e.mods.advFrom === A.key) adv.push(e.name);
       if (e.mods?.attackedAdv) adv.push(e.name);
@@ -398,7 +400,8 @@ export class Engine {
     if (req.src === 'npc') {
       const sections = ['actions', 'bonus', 'reactions', 'legendary', 'traits'];
       entry = sections.flatMap(s => A.actor?.[s] || []).find(e => e.name === req.id);
-    } else if (isSpell) entry = A.sheet?.spells.find(s => s.id === req.id);
+    } else if (req.src === 'npc-spell') { entry = this.spells?.[req.id]; isSpell = true; }
+    else if (isSpell) entry = A.sheet?.spells.find(s => s.id === req.id);
     else entry = A.sheet?.actions.find(a => a.id === req.id);
     if (!entry) return;
 
@@ -549,7 +552,7 @@ export class Engine {
   // ---------------------------------------------------------------- attacks
 
   attackBonus(A, entry, act, isSpell, opts) {
-    if (A.kind === 'npc') return { bonus: act.attack.bonus ?? 0, abil: null };
+    if (A.kind === 'npc') return { bonus: act.attack.bonus ?? (isSpell ? A.spellAttack : 0), abil: null };
     if (isSpell || act.attack.spell) return { bonus: act.attack.noFocus || entry.attack?.noFocus ? A.spellAttackBase : A.spellAttack, abil: A.sheet.spellcasting.ability };
     // weapons: pick the best allowed ability (Bladework lets Int count while Bladesong is up)
     let abils = [...(act.attack.ability || ['str'])];
@@ -593,7 +596,7 @@ export class Engine {
       const dist = this.dist(A, T);
       let kind = act.attack.kind;
       if (kind === 'melee' && act.attack.range && dist > (act.attack.reach || 5)) kind = 'ranged';
-      const { adv, dis } = this.attackMode(A, T, kind, dist);
+      const { adv, dis } = this.attackMode(A, T, kind, dist, isSpell || !!act.attack.spell);
       if (opts.adv) adv.push('chosen'); if (opts.dis) dis.push('chosen');
       const mode = adv.length && !dis.length ? '2d20kh' : dis.length && !adv.length ? '2d20kl' : '1d20';
       let penalty = '';
@@ -720,6 +723,12 @@ export class Engine {
     const totals = dmgRoll ? splitTotals(dmgRoll, parts) : [];
     const effects = (entry.effects || []).filter(e => act.effects?.includes(e.id));
     const applies = act.applies || [];
+    if (special?.onlyType) {
+      const out = targets.filter(T => !T.type.includes(special.onlyType) && T.kind !== 'pc');
+      for (const T of out) card.lines.push({ t: `${T.name} is unaffected (not a ${titleCase(special.onlyType)})`, c: 'muted' });
+      targets = targets.filter(T => !out.includes(T));
+      if (!targets.length) return;
+    }
     const results = await Promise.all(targets.map(T => this.savingThrow(T, abil, dc, { label: entry.name, spell: isSpell }).then(s => ({ T, s }))));
     for (const { T, s } of results) {
       const evasion = abil === 'dex' && act.onSave === 'half' && T.traits.includes('evasion');
@@ -743,12 +752,16 @@ export class Engine {
       if (!ok) {
         const st = applies.filter(x => !T.condImmune.includes(x));
         if (st.length) { T.setConditions([...new Set([...(T.conditions || []), ...st])]); }
+        const names = [...st];
         for (const e of effects) {
           const eff = this.spellEffect(A, entry, e, special, conc);
+          const imm = eff.statuses.filter(x => T.condImmune.includes(x));
           eff.statuses = eff.statuses.filter(x => !T.condImmune.includes(x));
+          if (imm.length) card.lines.push({ t: `${T.name} is immune to ${imm.map(titleCase).join(', ')}`, c: 'muted' });
+          if (e.statuses?.length && !eff.statuses.length) continue;
           this.addEffect(T, eff, card);
+          names.push(...(eff.statuses.length ? eff.statuses : [e.name]));
         }
-        const names = [...st, ...effects.flatMap(e => e.statuses?.length ? e.statuses : [e.name])];
         if (names.length) card.lines.push({ t: `${T.name}: ${[...new Set(names)].map(titleCase).join(', ')}`, c: 'hit' });
       }
     }
@@ -762,6 +775,7 @@ export class Engine {
     const f = h.f && !h.n ? String(h.f).replace(/\s+/g, '') : dice(n, h.d, b);
     const r = await this.io.roll(f, { label: `${A.name}: ${entry.name}`, by: card.by });
     const temp = /temp/.test(h.type || '');
+    if (A.kind === 'npc' && /reduce/i.test(act.name || '')) { card.lines.push({ t: `${A.name} reduces the damage by ${r.total}`, c: 'muted' }); return; }
     for (const T of targets) { this.applyHeal(T, r.total, card, { temp }); card.lines.push({ t: `${T.name} ${temp ? 'gains ' + r.total + ' temporary HP' : 'regains ' + r.total + ' HP'}`, c: 'heal' }); }
   }
 
@@ -814,7 +828,8 @@ export const SPELL_SPECIAL = {
   'haste': { icon: 'hasted', mods: { advSave: 'dex' } },
   'faerie-fire': { icon: 'burning', mods: { attackedAdv: true } },
   'warding-bond': { icon: 'blessed' },
-  'hold-person': { note: 'It repeats the save at the end of each of its turns.' },
+  'hold-person': { onlyType: 'humanoid', note: 'It repeats the save at the end of each of its turns.' },
+  'charm-person': { onlyType: 'humanoid' },
   'web': { patch: { auto: [{ type: 'save', save: { abil: ['dex'] }, onSave: 'none', applies: ['restrained'] }] }, note: 'The web is Difficult Terrain and Lightly Obscured.' },
   'blur': { patch: { auto: [], selfEffect: { key: 'blur', name: 'Blur', icon: 'invisible', rounds: 10, mods: { attackedDis: true } } } },
   'mirror-image': { patch: { auto: [], selfEffect: { key: 'mirror-image', name: 'Mirror Image (3 duplicates)', icon: 'invisible', rounds: 10 } }, note: 'Each time a creature hits you, roll a d6 per duplicate; any 3+ means a duplicate is hit and destroyed instead.' },
@@ -822,6 +837,8 @@ export const SPELL_SPECIAL = {
   'aid': { aid: true, patch: { auto: [] } },
   'prayer-of-healing': { patch: { auto: [{ type: 'heal', heal: { n: 2, d: 8, b: '@mod', type: 'healing', scale: { mode: 'whole', n: 1 } } }] } },
   'elemental-weapon': { patch: { targetEffect: { key: 'elemental-weapon', name: 'Elemental Weapon', icon: 'burning', rounds: 600, mods: { attackBonus: 1, weaponDamage: { f: '1d4', type: 'fire' } } } } },
+  'flesh-to-stone': { note: 'It repeats the save at the end of each of its turns: three failures and it is Petrified, three successes and the spell ends.' },
+  'counterspell': { note: 'On a failed save the spell fails and the slot isn’t spent.' },
   'true-strike': { note: 'Use True Strike from a weapon’s options so the attack uses your spellcasting ability.' },
 };
 

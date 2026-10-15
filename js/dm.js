@@ -858,7 +858,7 @@ function tokenEditor(sc, t) {
   } else box.append(el('p', { class: 'small muted' }, 'Party token: HP, AC and conditions come from the character (Party tab), and the player can change HP and conditions too.'));
   box.append(hpConditionsEditor(data, patch => change(() => Object.assign(target, patch), { panel: false }), { showMax: !ch }));
   const actor = t.actorId && S.camp.actors[t.actorId];
-  if (actor) box.append(el('details', { open: true }, el('summary', { class: 'small' }, 'Stat block'), renderStatBlock(actor, { onRoll: (f, label) => dmRoll(f, { label: label.replace(actor.name, st.name) }), onUse: (entry, i) => npcUse(sc, t, entry, i) })));
+  if (actor) box.append(el('details', { open: true }, el('summary', { class: 'small' }, 'Stat block'), renderStatBlock(actor, { onRoll: (f, label) => dmRoll(f, { label: label.replace(actor.name, st.name) }), onUse: (entry, i, spellId) => npcUse(sc, t, entry, i, spellId), spells: S.engine?.spells })));
   if (ch?.sheet) box.append(el('button', { class: 'btn small', type: 'button', onclick: () => openSheet(ch.id) }, 'Open character sheet'));
   box.append(el('div', { class: 'row' },
     el('button', { class: 'btn small', type: 'button', onclick: () => { const copy = { ...clone(t), id: uid(10), x: t.x + t.size }; if (!copy.charId) { copy.name = nextName(sc, t.name); change(() => sc.tokens.push(copy)); } } }, 'Duplicate'),
@@ -1425,11 +1425,17 @@ async function runUse(charId, req, targets) {
   return true;
 }
 
-async function npcUse(sc, t, entry, i) {
-  const act = entry.auto?.[i];
-  const run = async req => { S.engScene = sc; if (req.template) change(() => sc.templates.push({ ...sanitizeTpl(req.template), id: uid(8), owner: 'dm', color: DM_COLOR }), { panel: false }); await S.engine.use(t, { src: 'npc', id: entry.name, targets: validTargets(S.targets.dm, sc), template: req.template, opts: { activity: i } }); };
-  if (!(S.targets.dm || []).length && needsTarget({ auto: entry.auto }, i)) { toast('Target someone first: hover their token and press T', 'bad'); return; }
-  clientUse({ auto: entry.auto }, { opts: { activity: i } }, run, DM_COLOR);
+async function npcUse(sc, t, entry, i, spellId) {
+  const sp = spellId ? S.engine.spells?.[spellId] : null;
+  const subject = sp || { auto: entry.auto };
+  const req = sp ? { src: 'npc-spell', id: spellId, opts: { activity: 0 } } : { src: 'npc', id: entry.name, opts: { activity: i } };
+  const run = async r => {
+    S.engScene = sc;
+    if (r.template) change(() => sc.templates.push({ ...sanitizeTpl(r.template), id: uid(8), owner: 'dm', color: DM_COLOR }), { panel: false });
+    await S.engine.use(t, { ...req, targets: validTargets(S.targets.dm, sc), template: r.template });
+  };
+  if (!(S.targets.dm || []).length && needsTarget(subject, sp ? 0 : i)) { toast('Target someone first: hover their token and press T', 'bad'); return; }
+  clientUse(subject, req, run, DM_COLOR);
 }
 
 async function runCheck(charId, kind, key, mode) {

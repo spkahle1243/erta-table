@@ -55,6 +55,11 @@ New sheets are built from the PDFs with `tools/build_sheets.py` (sources in `too
 - **Gemini Canvas "Image Kit":** a small app to paste into Gemini Canvas. Erta Table copies a pack's image prompts with one click; the kit generates them with your own Gemini login and downloads one zip named by scene, portrait and handout; dropping the zip on Erta Table files every image in its place.
 - A session pack with every new prep.
 
+## Roadmap
+
+- **Image Kit (Gemini Canvas).** A small app to paste into Gemini Canvas. Erta Table copies a pack's image prompts with one click; the Image Kit generates them with your Gemini login and downloads one zip named by scene, portrait and handout; dropping the zip on Erta Table files every image in its place.
+- A session pack with every new prep.
+
 ## If a player can't connect
 
 Most home networks connect fine. A few strict networks (some offices, schools, mobile carriers) block direct browser-to-browser connections. The fix is a relay ("TURN server"); add one to `ICE_SERVERS` in `config.js`.

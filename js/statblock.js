@@ -23,7 +23,7 @@ export async function searchBestiary(q, limit = 12) {
 }
 
 // onRoll(formula, label, extra) ; onUse(actionEntry, activity) for automation hooks
-export function renderStatBlock(a, { onRoll, onUse, compact = false } = {}) {
+export function renderStatBlock(a, { onRoll, onUse, spells = null, compact = false } = {}) {
   const roll = (f, label, extra) => onRoll && onRoll(f, `${a.name}: ${label}`, extra);
   const rb = (text, f, label, cls = '') => el('button', { class: 'rb ' + cls, type: 'button', title: 'Roll ' + f, onclick: () => roll(f, label) }, text);
   const sb = el('div', { class: 'statblock' });
@@ -59,18 +59,25 @@ export function renderStatBlock(a, { onRoll, onUse, compact = false } = {}) {
     if (!list?.length) return;
     sb.append(el('div', { class: 'sb-h' }, title));
     if (note) sb.append(el('p', { class: 'sb-note' }, note));
-    for (const e of list) sb.append(entry(a, e, roll, onUse));
+    for (const e of list) sb.append(entry(a, e, roll, onUse, spells));
   };
   section('Traits', a.traits);
   section('Actions', a.actions);
   section('Bonus Actions', a.bonus);
   section('Reactions', a.reactions);
   section('Legendary Actions', a.legendary, a.legendaryUses ? `Legendary Action Uses: ${a.legendaryUses}. Immediately after another creature's turn, the ${a.name.toLowerCase()} can expend a use to take one of the following actions. It regains all expended uses at the start of each of its turns.` : '');
+  if (onUse && spells && a.spells?.length) {
+    const known = a.spells.map(n => spells[spellSlug(n)]).filter(Boolean);
+    if (known.length) {
+      sb.append(el('div', { class: 'sb-h' }, 'Spells'), el('p', { class: 'sb-note' }, `Spell save DC ${a.spellDC || '—'}. Click to cast at your targets (or place its area).`));
+      sb.append(el('div', { class: 'sb-btns' }, known.map(sp => el('button', { class: 'btn small', type: 'button', title: stripTags(sp.text).slice(0, 200), onclick: () => onUse({ name: sp.name }, 0, sp.id) }, sp.name))));
+    }
+  }
   if (a.notes) sb.append(el('div', { class: 'sb-h' }, 'Reskin notes'), el('div', { class: 'sb-text', html: a.notes }));
   return sb;
 }
 
-function entry(a, e, roll, onUse) {
+function entry(a, e, roll, onUse, spells) {
   const wrap = el('div', { class: 'sb-entry' });
   const head = el('span', { class: 'en' }, e.name + '. ');
   const body = el('span', { class: 'sb-text', html: stripP(e.text) });
@@ -91,6 +98,13 @@ function entry(a, e, roll, onUse) {
     }
     if (act.heal) btns.append(el('button', { class: 'rb big', type: 'button', onclick: () => roll(act.heal.f.replace(/\s+/g, ''), `${e.name}`) }, act.heal.f));
   });
+  // "Dorn casts <em>Flesh to Stone</em>": cast it from the SRD spell list
+  if (onUse && spells && !e.auto?.length) {
+    for (const m of String(e.text || '').matchAll(/casts? <em>([^<]+)<\/em>/gi)) {
+      const id = spellSlug(m[1]);
+      if (spells[id]) btns.append(el('button', { class: 'btn small primary', type: 'button', title: 'Cast with this creature’s spell DC and attack', onclick: () => onUse(e, 0, id) }, `Cast ${spells[id].name} ▸`));
+    }
+  }
   const rech = e.name.match(/Recharge (\d)/);
   if (rech) btns.append(el('button', { class: 'rb', type: 'button', onclick: () => roll('1d6', `${e.name.replace(/ \(.*/, '')} recharge (needs ${rech[1]}+)`) }, 'Recharge d6'));
   if (btns.children.length) wrap.append(btns);
@@ -102,3 +116,6 @@ export function critFormula(parts) {
 }
 
 function stripP(html) { return String(html || '').replace(/^<p>/, '').replace(/<\/p>$/, '').replace(/<\/p>\s*<p>/g, '<br><br>'); }
+
+export function spellSlug(n) { return String(n).toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
+function stripTags(h) { return String(h || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(); }
