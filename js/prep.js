@@ -55,8 +55,21 @@ export function importPack(c, pack) {
     if (ex) Object.assign(ex, { name: k.name, size: k.size, goal: k.goal, steps: k.steps || {} });
     else c.clocks.push({ id: uid(8), pack: pack.id, key: k.key, name: k.name, size: k.size, value: k.start || 0, visible: !!k.visible, goal: k.goal || '', steps: k.steps || {} });
   }
+  orderPackScenes(c, pack);
   c.activePack = pack.id;
   return { fresh, added };
+}
+
+// Keep a pack's scenes in prep order (scene 1 at the top), as one block where the first of them sits.
+export function orderPackScenes(c, pack) {
+  const idx = new Map(pack.scenes.map((s, i) => [s.key, i]));
+  const mine = sc => sc.packRef?.pack === pack.id && idx.has(sc.packRef.key);
+  const first = c.scenes.findIndex(mine);
+  if (first < 0) return;
+  const block = c.scenes.filter(mine).sort((a, b) => idx.get(a.packRef.key) - idx.get(b.packRef.key));
+  const rest = c.scenes.filter(sc => !mine(sc));
+  const before = c.scenes.slice(0, first).filter(sc => !mine(sc)).length;
+  c.scenes = [...rest.slice(0, before), ...block, ...rest.slice(before)];
 }
 
 export async function fetchPackIndex() {

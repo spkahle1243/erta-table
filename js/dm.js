@@ -12,7 +12,7 @@ import { ICONS, modal, confirmBox, promptBox, popover, closePopover, hpCondition
 import { roll as rollDice, withAdvantage, DiceOverlay, RollLog } from './dice.js';
 import { newCombat, combatant, sortCombat, current as currentCombatant, advance, combatView, renderStrip } from './combat.js';
 import { loadBestiary, searchBestiary, renderStatBlock } from './statblock.js';
-import { importPack, paneprep, actorModal, encounterTokens, clockWidget } from './prep.js';
+import { importPack, paneprep, actorModal, encounterTokens, clockWidget, orderPackScenes } from './prep.js';
 import { Engine, actorFor, sheetNumbers } from './rules.js';
 import { SheetWindow, AREA_SHAPE, needsTarget } from './sheet.js';
 import { imageKitDialog, importZip, listenForKit, artFor } from './imagekit.js';
@@ -112,6 +112,7 @@ function migrate(c) {
   c.actors ||= {};
   if (c.combat === undefined) c.combat = null;
   for (const ch of c.characters) { ch.init ??= 0; ch.effects ||= []; ch.state ||= {}; }
+  if (!c.sceneOrderV1) { for (const p of Object.values(c.packs)) orderPackScenes(c, p); c.sceneOrderV1 = true; }
   for (const s of c.scenes) { s.templates ||= []; s.fog ||= { on: true, ops: [] }; s.kind ||= 'map'; for (const t of s.tokens) t.init ??= 0; }
 }
 
