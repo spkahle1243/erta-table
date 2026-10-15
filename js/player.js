@@ -266,6 +266,7 @@ function openSheet() {
     rest: kind => P.client.send({ t: 'rest', kind }),
     deathSave: () => P.client.send({ t: 'death' }),
     endConc: () => P.client.send({ t: 'end-conc' }),
+    endEffect: id => P.client.send({ t: 'end-effect', id }),
     setState: patch => P.client.send({ t: 'sheet-state', patch }),
   });
 }

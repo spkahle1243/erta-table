@@ -1,0 +1,427 @@
+{
+ "id": "dr-gregory-sharpfoot",
+ "name": "Dr. Gregory Sharpfoot",
+ "player": "",
+ "series": "erta",
+ "color": "#1C6A51",
+ "species": "Tortle",
+ "background": "Izzet Engineer",
+ "classes": [
+  {
+   "name": "Artificer",
+   "sub": "Armorer",
+   "level": 6,
+   "hd": 8
+  },
+  {
+   "name": "Warlock",
+   "sub": "The Great Old One",
+   "level": 2,
+   "hd": 8
+  }
+ ],
+ "abilities": {
+  "str": 7,
+  "dex": 11,
+  "con": 13,
+  "int": 16,
+  "wis": 14,
+  "cha": 16
+ },
+ "saveProf": [
+  "con",
+  "int"
+ ],
+ "skills": {
+  "Arcana": 1,
+  "History": 1,
+  "Investigation": 1,
+  "Perception": 1,
+  "Survival": 1
+ },
+ "skillBonus": {
+  "Sleight of Hand": 5
+ },
+ "passiveBonus": 5,
+ "tools": "Alchemist's supplies, jeweler's tools, smith's tools, thieves' tools, tinker's tools (expertise)",
+ "ac": 20,
+ "acNote": "Tortle natural armor 17 + Repulsion Shield +1 (3). Shell Defense adds +4.",
+ "hp": 59,
+ "speed": "35 ft",
+ "size": 1,
+ "senses": "Darkvision 60 ft (Monocle of Night)",
+ "languages": "Common, Aquan, Goblin; telepathy 30 ft (Awakened Mind)",
+ "resist": [],
+ "saveNotes": "Advantage on Stealth checks (Dampening Field).",
+ "spellcasting": {
+  "ability": "int",
+  "slots": [
+   4,
+   2
+  ],
+  "pact": {
+   "level": 1,
+   "max": 2
+  }
+ },
+ "spells": [
+  "mage-hand",
+  "prestidigitation",
+  "chill-touch",
+  {
+   "custom": "eidolic-chains"
+  },
+  {
+   "id": "cure-wounds",
+   "prepared": true
+  },
+  {
+   "id": "feather-fall",
+   "prepared": true
+  },
+  {
+   "id": "grease",
+   "prepared": true
+  },
+  {
+   "id": "identify",
+   "prepared": true
+  },
+  {
+   "id": "magic-missile",
+   "always": true
+  },
+  {
+   "id": "thunderwave",
+   "always": true
+  },
+  {
+   "id": "heat-metal",
+   "prepared": true
+  },
+  {
+   "id": "invisibility",
+   "prepared": true
+  },
+  {
+   "id": "mirror-image",
+   "always": true
+  },
+  {
+   "id": "shatter",
+   "always": true
+  },
+  {
+   "id": "dissonant-whispers",
+   "prepared": true,
+   "pact": true
+  },
+  {
+   "id": "hideous-laughter",
+   "prepared": true,
+   "pact": true
+  },
+  {
+   "custom": "tidal-barrier",
+   "prepared": true,
+   "pact": true
+  },
+  {
+   "id": "disguise-self",
+   "always": true,
+   "atWill": true
+  }
+ ],
+ "customSpells": {
+  "eidolic-chains": {
+   "name": "Eidolic Chains",
+   "level": 0,
+   "school": "Conjuration",
+   "time": "Action",
+   "range": "30 ft",
+   "duration": "Concentration, up to 1 minute",
+   "conc": true,
+   "comp": "VS",
+   "text": "<p>A creature that you can see within range must succeed on a Strength (Athletics) or Dexterity (Acrobatics) check (its choice) against your spell save DC or become Grappled. It can repeat the check at the start of each of its turns to break free.</p>",
+   "auto": [
+    {
+     "type": "save",
+     "save": {
+      "abil": [
+       "str"
+      ],
+      "skills": [
+       "Athletics",
+       "Acrobatics"
+      ]
+     },
+     "onSave": "none",
+     "effects": [
+      "chains"
+     ]
+    }
+   ],
+   "effects": [
+    {
+     "id": "chains",
+     "name": "Eidolic Chains",
+     "mods": {},
+     "statuses": [
+      "grappled"
+     ]
+    }
+   ]
+  },
+  "tidal-barrier": {
+   "name": "Tidal Barrier",
+   "level": 1,
+   "school": "Abjuration",
+   "time": "Action",
+   "range": "Self (10-foot radius)",
+   "duration": "Concentration, up to 1 minute",
+   "conc": true,
+   "comp": "VSM",
+   "text": "<p>Seawater swirls in a 10-foot radius around you. The area is Difficult Terrain, and a creature that starts its turn in it or enters it makes a Strength save or is pushed 10 feet away from you and its speed becomes 0 until the start of its next turn.</p>",
+   "selfEffect": {
+    "key": "tidal-barrier",
+    "name": "Tidal Barrier",
+    "icon": "dodging",
+    "rounds": 10
+   }
+  }
+ },
+ "resources": [
+  {
+   "id": "refuel",
+   "name": "Spell-Refueling Ring",
+   "max": 1,
+   "recover": "dawn"
+  },
+  {
+   "id": "repulsion",
+   "name": "Repulsion Shield charges",
+   "max": 4,
+   "recover": "dawn"
+  },
+  {
+   "id": "potion",
+   "name": "Potion of Healing",
+   "max": 1,
+   "recover": "none"
+  }
+ ],
+ "actions": [
+  {
+   "id": "lightning-launcher",
+   "name": "Lightning Launcher",
+   "time": "action",
+   "kind": "weapon",
+   "text": "Ranged weapon attack (90/300 ft) using Intelligence. Hit: 1d6 + Int Lightning. Once on each of your turns, a hit deals an extra 1d6 Lightning (added automatically). Extra Attack: two attacks with the Attack action.",
+   "attack": {
+    "kind": "ranged",
+    "ability": [
+     "int"
+    ],
+    "bonus": 1,
+    "range": [
+     90,
+     300
+    ]
+   },
+   "damage": [
+    {
+     "n": 1,
+     "d": 6,
+     "ability": true,
+     "type": "lightning"
+    }
+   ],
+   "oncePerTurn": {
+    "f": "1d6",
+    "type": "lightning",
+    "label": "Lightning Launcher surge"
+   }
+  },
+  {
+   "id": "turtle-cane",
+   "name": "Turtle Cane",
+   "time": "action",
+   "kind": "weapon",
+   "text": "Quarterstaff, reach 5 ft. Hit: 1d6 + Str Bludgeoning; versatile 1d8.",
+   "attack": {
+    "kind": "melee",
+    "ability": [
+     "str"
+    ],
+    "reach": 5
+   },
+   "damage": [
+    {
+     "n": 1,
+     "d": 6,
+     "ability": true,
+     "type": "bludgeoning"
+    }
+   ],
+   "versatile": {
+    "n": 1,
+    "d": 8
+   }
+  },
+  {
+   "id": "cane-crossbow",
+   "name": "Turtle Cane Crossbow",
+   "time": "action",
+   "kind": "weapon",
+   "text": "Ranged (80/320 ft), loading, two-handed. Hit: 1d8 + Dex Piercing.",
+   "attack": {
+    "kind": "ranged",
+    "ability": [
+     "dex"
+    ],
+    "range": [
+     80,
+     320
+    ]
+   },
+   "damage": [
+    {
+     "n": 1,
+     "d": 8,
+     "ability": true,
+     "type": "piercing"
+    }
+   ]
+  },
+  {
+   "id": "claws",
+   "name": "Claws",
+   "time": "action",
+   "kind": "weapon",
+   "text": "Unarmed strike. Hit: 1d4 + Str Slashing.",
+   "attack": {
+    "kind": "melee",
+    "ability": [
+     "str"
+    ],
+    "reach": 5
+   },
+   "damage": [
+    {
+     "n": 1,
+     "d": 4,
+     "ability": true,
+     "type": "slashing"
+    }
+   ]
+  },
+  {
+   "id": "shell-defense",
+   "name": "Shell Defense",
+   "time": "action",
+   "text": "Withdraw into your shell: +4 AC, advantage on Strength and Constitution saves, disadvantage on Dexterity saves, Prone, speed 0, no reactions; the only action you can take is a bonus action to emerge. End it from the effect on your sheet (×).",
+   "selfEffect": {
+    "key": "shell",
+    "name": "Shell Defense",
+    "icon": "dodging",
+    "mods": {
+     "acBonus": 4,
+     "advSave": [
+      "str",
+      "con"
+     ],
+     "disSave": [
+      "dex"
+     ]
+    },
+    "statuses": [
+     "prone"
+    ]
+   }
+  },
+  {
+   "id": "repulsion",
+   "name": "Repulsion Shield",
+   "time": "reaction",
+   "uses": "repulsion",
+   "text": "When a melee attack hits you, push the attacker up to 15 ft away."
+  },
+  {
+   "id": "refuel",
+   "name": "Spell-Refueling Ring",
+   "time": "action",
+   "uses": "refuel",
+   "text": "Recover one expended spell slot of level 2 or lower (the number of items you're attuned to).",
+   "restoreSlot": 2
+  },
+  {
+   "id": "potion",
+   "name": "Potion of Healing",
+   "time": "bonus",
+   "uses": "potion",
+   "text": "Regain 2d4 + 2 HP.",
+   "selfHeal": {
+    "f": "2d4+2"
+   }
+  }
+ ],
+ "features": [
+  {
+   "name": "Arcane Armor (Infiltrator)",
+   "text": "Your armor is your focus; Lightning Launcher, +5 ft speed (included) and Dampening Field (advantage on Stealth)."
+  },
+  {
+   "name": "Extra Attack",
+   "text": "Attack twice when you take the Attack action."
+  },
+  {
+   "name": "Magical Tinkering",
+   "text": "Give a Tiny object light, a recorded message, an odor or sound, or a static image (up to 3 objects)."
+  },
+  {
+   "name": "Infuse Item",
+   "text": "3 infused items: Repulsion Shield, Spell-Refueling Ring, Gloves of Thievery (plus Wand of Secrets, Lantern of Revealing, Wand of Magic Detection known)."
+  },
+  {
+   "name": "Tool Expertise",
+   "text": "Double proficiency on checks with tools you're proficient with."
+  },
+  {
+   "name": "Observant",
+   "text": "Read lips; +5 to passive Perception and Investigation (included)."
+  },
+  {
+   "name": "Eldritch Invocations",
+   "text": "Eyes of the Rune Keeper (read all writing); Mask of Many Faces (Disguise Self at will)."
+  },
+  {
+   "name": "Awakened Mind",
+   "text": "Telepathy with any creature you can see within 30 ft."
+  },
+  {
+   "name": "Tortle",
+   "text": "Natural armor 17 (shield bonus applies); hold breath 1 hour; claws; Shell Defense (see Actions)."
+  }
+ ],
+ "inventory": [
+  "Repulsion Shield +1 (attuned)",
+  "Spell-Refueling Ring (attuned)",
+  "Gloves of Thievery",
+  "Monocle of Night",
+  "Lantern of Revealing",
+  "Wand of Magic Detection",
+  "Wand of Secrets",
+  "Potion of Healing",
+  "Turtle Cane",
+  "Turtle Cane Crossbow",
+  "Harmonica",
+  "Alchemist's supplies, jeweler's, smith's, tinker's and thieves' tools",
+  "Backpack, chalk, crowbar, grappling hook, hammer, manacles, 10 pitons, 5 days of rations, 50 ft hempen rope, tinderbox, 5 torches"
+ ],
+ "token": "Dr. Gregory Sharpfoot, an elderly tortle artificer and detective: a broad weathered green-brown shell etched with brass fittings, a wrinkled beaked face with kind clever eyes behind a dark-lensed monocle, one armored fist set with a glowing blue gem that crackles with lightning, a carved turtle-headed cane and a round shield. Wise, curious and unflappable.",
+ "flags": [
+  "Lightning Launcher: the sheet says +7 to hit; Int 3 + proficiency 3 makes +6. I kept +7 to match the sheet; say if it should be +6.",
+  "Spellcasting: artificer (Int) and warlock (Cha) are both +6 / DC 14 for him, so one spell attack and DC covers both. His two warlock slots show as Pact Magic.",
+  "Natural Armor: tortles can't benefit from worn armor, so his AC is 17 + the +1 Repulsion Shield (20), as on the sheet. Arcane Armor's benefits (launcher, Dampening Field) are kept as written."
+ ]
+}

@@ -1,0 +1,349 @@
+{
+ "id": "ash-escanor",
+ "name": "Ash Escanor",
+ "player": "Andy",
+ "series": "erta",
+ "color": "#B0421D",
+ "species": "Half-Elf",
+ "background": "Urban Bounty Hunter",
+ "classes": [
+  {
+   "name": "Warlock",
+   "sub": "The Hexblade",
+   "level": 5,
+   "hd": 8
+  },
+  {
+   "name": "Fighter",
+   "sub": "Echo Knight",
+   "level": 3,
+   "hd": 10
+  }
+ ],
+ "abilities": {
+  "str": 10,
+  "dex": 14,
+  "con": 14,
+  "int": 11,
+  "wis": 12,
+  "cha": 20
+ },
+ "saveProf": [
+  "wis",
+  "cha"
+ ],
+ "skills": {
+  "Deception": 1,
+  "Insight": 1,
+  "Investigation": 1,
+  "Perception": 1,
+  "Persuasion": 1,
+  "Stealth": 1
+ },
+ "tools": "Playing card set, dice set",
+ "ac": 15,
+ "acNote": "Chain shirt 13 + Dex 2",
+ "hp": 57,
+ "speed": "30 ft",
+ "size": 1,
+ "senses": "Darkvision 60 ft; Devil's Sight 120 ft",
+ "languages": "Common, Elvish, Dwarvish",
+ "resist": [],
+ "saveNotes": "Fey Ancestry: advantage on saves against being charmed; magic can't put you to sleep.",
+ "spellcasting": {
+  "ability": "cha",
+  "slots": [],
+  "pact": {
+   "level": 3,
+   "max": 2
+  }
+ },
+ "spells": [
+  {
+   "custom": "booming-blade"
+  },
+  "eldritch-blast",
+  "minor-illusion",
+  {
+   "custom": "armor-of-agathys",
+   "pact": true
+  },
+  {
+   "id": "hellish-rebuke",
+   "pact": true
+  },
+  {
+   "id": "darkness",
+   "pact": true
+  },
+  {
+   "id": "mirror-image",
+   "pact": true
+  },
+  {
+   "id": "misty-step",
+   "pact": true
+  },
+  {
+   "id": "counterspell",
+   "pact": true
+  }
+ ],
+ "customSpells": {
+  "booming-blade": {
+   "name": "Booming Blade",
+   "level": 0,
+   "school": "Evocation",
+   "time": "Action",
+   "range": "Self (5-foot radius)",
+   "duration": "1 round",
+   "conc": false,
+   "comp": "VM",
+   "text": "<p>Make a melee attack with your weapon. On a hit the target takes the weapon's normal effects plus 1d8 Thunder, and is sheathed in booming energy until the start of your next turn: if it willingly moves 5 feet or more, it takes 2d8 Thunder and the spell ends.</p><p>Use it from Ashenflare's options (Booming Blade).</p>"
+  },
+  "armor-of-agathys": {
+   "name": "Armor of Agathys",
+   "level": 1,
+   "school": "Abjuration",
+   "time": "Action",
+   "range": "Self",
+   "duration": "1 hour",
+   "conc": false,
+   "comp": "VSM",
+   "text": "<p>Spectral frost covers you: you gain 5 temporary HP per slot level. While you have them, a creature that hits you with a melee attack takes 5 Cold damage per slot level.</p>",
+   "selfTempPerLevel": 5,
+   "selfEffect": {
+    "key": "agathys",
+    "name": "Armor of Agathys (melee attackers take cold)",
+    "icon": "dodging",
+    "rounds": 600
+   }
+  }
+ },
+ "resources": [
+  {
+   "id": "curse",
+   "name": "Hexblade's Curse",
+   "max": 1,
+   "recover": "sr"
+  },
+  {
+   "id": "second-wind",
+   "name": "Second Wind",
+   "max": 1,
+   "recover": "sr"
+  },
+  {
+   "id": "action-surge",
+   "name": "Action Surge",
+   "max": 1,
+   "recover": "sr"
+  },
+  {
+   "id": "unleash",
+   "name": "Unleash Incarnation",
+   "max": 2,
+   "recover": "lr"
+  }
+ ],
+ "actions": [
+  {
+   "id": "ashenflare",
+   "name": "Ashenflare (pact weapon)",
+   "time": "action",
+   "kind": "weapon",
+   "text": "Melee weapon attack, reach 5 ft, using Charisma (Hex Warrior). Hit: 1d8 + Cha + 2 (Dueling) Slashing; versatile 1d10 (no Dueling). Thirsting Blade: attack twice with the Attack action. Attacks can come from your echo's space.",
+   "attack": {
+    "kind": "melee",
+    "ability": [
+     "cha"
+    ],
+    "reach": 5
+   },
+   "damage": [
+    {
+     "n": 1,
+     "d": 8,
+     "ability": true,
+     "b": 2,
+     "type": "slashing"
+    }
+   ],
+   "versatile": {
+    "n": 1,
+    "d": 10,
+    "dropBonus": true
+   },
+   "riders": [
+    "boomingBlade"
+   ]
+  },
+  {
+   "id": "hexblades-curse",
+   "name": "Hexblade's Curse",
+   "time": "bonus",
+   "uses": "curse",
+   "text": "Curse a creature within 30 ft for 1 minute: +3 damage on your hits against it, and you crit it on a 19 or 20. If it dies, you regain 10 HP.",
+   "targetEffect": {
+    "key": "hex-curse",
+    "name": "Hexblade's Curse",
+    "icon": "marked",
+    "rounds": 10,
+    "mods": {
+     "damageFrom": {
+      "key": "self",
+      "f": "3",
+      "type": ""
+     },
+     "critFrom": {
+      "key": "self",
+      "range": 19
+     }
+    }
+   }
+  },
+  {
+   "id": "manifest-echo",
+   "name": "Manifest Echo",
+   "time": "bonus",
+   "summon": "echo",
+   "text": "An echo of you appears within 15 ft: AC 17, 1 HP, immune to conditions, uses your saves. Move it 30 ft on your turn; swap places with it as a bonus action (costs 15 ft of movement). Attacks from the Attack action can come from its space; it can make opportunity attacks for you."
+  },
+  {
+   "id": "unleash",
+   "name": "Unleash Incarnation",
+   "time": "special",
+   "uses": "unleash",
+   "text": "When you take the Attack action, make one extra melee attack from the echo's position."
+  },
+  {
+   "id": "second-wind",
+   "name": "Second Wind",
+   "time": "bonus",
+   "uses": "second-wind",
+   "text": "Regain 1d10 + 3 HP.",
+   "selfHeal": {
+    "f": "1d10+3"
+   }
+  },
+  {
+   "id": "action-surge",
+   "name": "Action Surge",
+   "time": "special",
+   "uses": "action-surge",
+   "text": "Take one additional action this turn."
+  }
+ ],
+ "summons": {
+  "echo": {
+   "name": "Ash's Echo",
+   "size": "Medium",
+   "squares": 1,
+   "type": "Echo",
+   "alignment": "",
+   "ac": 17,
+   "hp": {
+    "max": 1,
+    "formula": "1"
+   },
+   "init": 0,
+   "speed": "30 ft.",
+   "abilities": {
+    "str": 10,
+    "dex": 14,
+    "con": 14,
+    "int": 11,
+    "wis": 12,
+    "cha": 20
+   },
+   "saves": {
+    "str": 0,
+    "dex": 2,
+    "con": 2,
+    "int": 0,
+    "wis": 4,
+    "cha": 8
+   },
+   "skills": {},
+   "senses": "—",
+   "languages": "—",
+   "resist": [],
+   "immune": [],
+   "vuln": [],
+   "condImmune": [
+    "blinded",
+    "charmed",
+    "deafened",
+    "frightened",
+    "grappled",
+    "incapacitated",
+    "invisible",
+    "paralyzed",
+    "petrified",
+    "poisoned",
+    "prone",
+    "restrained",
+    "stunned",
+    "unconscious",
+    "exhaustion"
+   ],
+   "cr": 0,
+   "crText": "—",
+   "xp": 0,
+   "pb": 3,
+   "traits": [
+    {
+     "name": "Echo",
+     "text": "<p>A translucent grey image of Ash. Destroyed if more than 30 ft from him at the end of his turn, if he is Incapacitated, or if he manifests another. Uses Ash's save bonuses.</p>"
+    }
+   ]
+  }
+ },
+ "features": [
+  {
+   "name": "Pact of the Blade",
+   "text": "Ashenflare is your pact weapon; it counts as magical and is your spellcasting focus (Improved Pact Weapon)."
+  },
+  {
+   "name": "Hex Warrior",
+   "text": "Use Charisma for attack and damage with Ashenflare (included)."
+  },
+  {
+   "name": "Thirsting Blade",
+   "text": "Attack twice with your pact weapon when you take the Attack action."
+  },
+  {
+   "name": "Devil's Sight",
+   "text": "See normally in magical and nonmagical darkness out to 120 ft."
+  },
+  {
+   "name": "Fighting Style: Dueling",
+   "text": "+2 damage with a one-handed melee weapon and no other weapon (included)."
+  },
+  {
+   "name": "Echo Knight",
+   "text": "Manifest Echo and Unleash Incarnation are in Actions."
+  },
+  {
+   "name": "Fey Ancestry",
+   "text": "Advantage on saves against being charmed; magic can't put you to sleep."
+  },
+  {
+   "name": "Ear to the Ground",
+   "text": "A contact in any city who knows the local people and places."
+  }
+ ],
+ "inventory": [
+  "Ashenflare",
+  "Chain shirt",
+  "Component pouch",
+  "Dungeoneer's pack",
+  "Common clothes",
+  "A receipt of deposit at a bank in a far-flung city"
+ ],
+ "token": "Ash Escanor, a lean half-elf hexblade warlock and bounty hunter: fair skin, striking green eyes, swept-back white hair, a dark coat over a chain shirt, holding Ashenflare, a longsword with a glowing ember-red crystal set in its pommel and faint fire along the blade, a translucent grey echo of himself just behind his shoulder. Cool, wry and dangerous.",
+ "flags": [
+  "Weapon: the sheet doesn't list Ash's weapon. I made Ashenflare a longsword (+8 to hit, 1d8 + 7 Slashing with Hex Warrior and Dueling). Send its real stats if it does more, like fire damage.",
+  "Booming Blade is on the sheet as a cantrip; use it from Ashenflare's options so it rides on the attack."
+ ]
+}

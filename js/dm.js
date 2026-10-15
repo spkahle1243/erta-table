@@ -234,7 +234,7 @@ function onPlayerMessage(pid, m, info) {
       }
       return;
     }
-    case 'use': case 'check': case 'death': case 'rest': case 'sheet-state': case 'end-conc': case 'save-roll': case 'targets':
+    case 'use': case 'check': case 'death': case 'rest': case 'sheet-state': case 'end-conc': case 'end-effect': case 'save-roll': case 'targets':
       onRulesMessage(pid, m, info);
       return;
     case 'pc': {
@@ -1026,6 +1026,14 @@ function paneParty() {
   const online = new Set([...(S.host?.clients.values() || [])].map(c => c.info.charId));
   const wrap = el('div', { class: 'stack' }, el('div', { class: 'row' }, el('h3', { class: 'grow' }, 'Party'), el('button', { class: 'btn small', type: 'button', onclick: () => change(c => c.characters.push(newCharacter(c, {}))) }, '+ Character')),
     el('p', { class: 'small muted' }, 'Send each player their own link. Opening it puts them at the table as that character. Drag a character onto the map to place their token.'));
+  const fromSheets = (S.sheetList || []).filter(x => x.series === S.camp.theme && !S.camp.characters.some(c => c.name.toLowerCase() === x.name.toLowerCase()));
+  if (fromSheets.length) wrap.append(el('div', { class: 'card stack' },
+    el('div', { class: 'small' }, `Converted sheets ready for this campaign: ${fromSheets.map(x => x.name).join(', ')}.`),
+    el('div', { class: 'row' }, el('button', { class: 'btn small primary', type: 'button', onclick: async () => {
+      const sheets = await Promise.all(fromSheets.map(x => fetchSheet(x.file)));
+      change(c => { for (const sh of sheets) { const ch = newCharacter(c, { name: sh.name, player: sh.player || '', color: sh.color, hp: sh.hp, ac: sh.ac, speed: sh.speed }); c.characters.push(ch); applySheet(ch, sh); } });
+      toast(`Added ${sheets.map(s => s.name).join(', ')}`, 'ok');
+    } }, `Add ${fromSheets.length === 1 ? fromSheets[0].name : 'them'} to the party`))));
   for (const ch of S.camp.characters) {
     const link = el('input', { type: 'text', readonly: true, value: playerLink(ch) });
     const av = avatar(ch.name, ch.color, null);
@@ -1347,6 +1355,8 @@ function applySheet(ch, sheet) {
 
 async function autoAttachSheets() {
   const idx = await sheetIndex();
+  S.sheetList = idx;
+  if (S.tab === 'party') renderPanel(true);
   const todo = S.camp.characters.filter(ch => !ch.sheet && !ch.sheetDeclined).map(ch => [ch, idx.find(x => x.series === S.camp.theme && x.name.toLowerCase() === ch.name.toLowerCase())]).filter(([, x]) => x);
   if (!todo.length) return;
   const sheets = await Promise.all(todo.map(([, x]) => fetchSheet(x.file)));
@@ -1402,6 +1412,7 @@ function openSheet(charId) {
     rest: kind => runRest(charId, kind),
     deathSave: () => runDeath(charId),
     endConc: () => runEndConc(charId),
+    endEffect: id => runEndEffect(charId, id),
     setState: patch => change(() => mergeState(ch, patch)),
   });
 }
@@ -1469,6 +1480,13 @@ function runEndConc(charId) {
   postCard(card);
   change(() => {});
 }
+function runEndEffect(charId, effId) {
+  const sc = activeScene() || scene(); S.engScene = sc;
+  const A = actorFor(S.camp, sc, pcToken(charId, sc) || { charId });
+  const e = A?.effects.find(x => x.id === effId); if (!e) return;
+  change(() => S.engine.removeEffect(A, effId));
+  postCard({ id: uid(10), ts: Date.now(), by: { name: A.name, color: A.color, charId }, title: `${A.name}: ${e.name} ends`, lines: [], undo: [] });
+}
 function mergeState(ch, p) {
   const sh = ch.sheet; if (!sh) return;
   const st = (ch.state ||= {});
@@ -1511,6 +1529,7 @@ function onRulesMessage(pid, m, info) {
     case 'death': runDeath(ch.id); return;
     case 'rest': runRest(ch.id, m.kind === 'long' ? 'long' : 'short'); return;
     case 'end-conc': runEndConc(ch.id); return;
+    case 'end-effect': runEndEffect(ch.id, String(m.id || '')); return;
     case 'sheet-state': change(() => mergeState(ch, m.patch || {}), { panel: false }); return;
     case 'save-roll': {
       const p = S.engine.pending.get(m.id);

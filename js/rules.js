@@ -26,7 +26,7 @@ export function sheetNumbers(sheet, eff = []) {
   const save = a => m[a] + (sheet.saveProf?.includes(a) ? pb : 0) + (sheet.saveBonus || 0);
   const skill = name => {
     const p = sheet.skills?.[name] || 0;
-    return m[SKILL_ABIL[name]] + Math.floor(pb * p) + (sheet.checkBonus || 0);
+    return m[SKILL_ABIL[name]] + Math.floor(pb * p) + (sheet.checkBonus || 0) + (sheet.skillBonus?.[name] || 0);
   };
   const sc = sheet.spellcasting;
   const spellMod = sc ? m[sc.ability] : 0;
@@ -37,7 +37,7 @@ export function sheetNumbers(sheet, eff = []) {
     spellAttackBase: sc ? spellMod + pb : null,
     spellDC: sc ? 8 + spellMod + pb + (sc.dcBonus || 0) : null,
     spellMod,
-    passive: 10 + skill('Perception'),
+    passive: 10 + skill('Perception') + (sheet.passiveBonus || 0),
   };
 }
 
@@ -171,19 +171,20 @@ export class Engine {
   // ---------------------------------------------------------------- saves
 
   // Resolve a saving throw for target T. Players roll their own; monsters are rolled here.
-  async savingThrow(T, abil, dc, { label, spell = false, conc = false } = {}) {
+  async savingThrow(T, abil, dc, { label, spell = false, conc = false, skills = null } = {}) {
     const tc = condsOf(T);
     if (['str', 'dex'].includes(abil) && ['paralyzed', 'stunned', 'unconscious', 'petrified'].some(c => tc.includes(c)))
       return { total: 0, success: false, auto: true, note: 'fails automatically' };
     let adv = false, dis = false;
     if (abil === 'dex' && tc.includes('restrained')) dis = true;
-    for (const e of T.effects || []) { if (e.mods?.advSave === abil || e.mods?.advSave === 'all') adv = true; }
+    const hit = (v, a) => v === a || v === 'all' || (Array.isArray(v) && v.includes(a));
+    for (const e of T.effects || []) { if (hit(e.mods?.advSave, abil)) adv = true; if (hit(e.mods?.disSave, abil)) dis = true; }
     if (spell && T.traits.some(n => n.startsWith('magic resistance'))) adv = true;
     if (conc && T.concAdv) adv = true;
-    let bonus = T.saveBonus(abil) + this.auraBonus(T);
+    let bonus = skills ? Math.max(...skills.map(sk => T.skill(sk))) : T.saveBonus(abil) + this.auraBonus(T);
     if (conc) for (const e of T.effects || []) if (e.mods?.concBonus) bonus += Number(e.mods.concBonus) || 0;
-    const dice = (adv && !dis ? '2d20kh' : dis && !adv ? '2d20kl' : '1d20') + sgn(bonus) + this.bonusDice(T, 'save');
-    const name = `${ABIL_NAME[abil]} save (DC ${dc})${label ? ' · ' + label : ''}`;
+    const dice = (adv && !dis ? '2d20kh' : dis && !adv ? '2d20kl' : '1d20') + sgn(bonus) + this.bonusDice(T, skills ? 'check' : 'save');
+    const name = `${skills ? skills.join(' or ') + ' check' : ABIL_NAME[abil] + ' save'} (DC ${dc})${label ? ' · ' + label : ''}`;
     if (T.kind === 'pc' && this.io.onlineChars().has(T.char.id)) {
       // The player clicks to roll; the DM can roll for them from the card.
       const id = uid(8);
@@ -387,7 +388,7 @@ export class Engine {
     if (entry.auto) return entry.auto; // NPC stat block entries
     const out = [];
     if (entry.attack) out.push({ type: 'attack', attack: entry.attack, damage: entry.damage || [], weapon: entry.kind === 'weapon' });
-    else if (entry.save) out.push({ type: 'save', save: entry.save, onSave: entry.onSave || 'half', damage: entry.damage || [], area: entry.area });
+    else if (entry.save) out.push({ type: 'save', save: entry.save, onSave: entry.onSave || 'half', damage: entry.damage || [], area: entry.area, applies: entry.applies || [] });
     return out;
   }
 
@@ -439,6 +440,7 @@ export class Engine {
     }
 
     // ---- costs
+    if (entry.atWill) noSlot = true;
     if (isSpell && entry.level > 0 && !noSlot) {
       level = Math.max(entry.level, req.slot || entry.level);
       const free = opts.ritual && entry.ritual;
@@ -455,6 +457,8 @@ export class Engine {
 
     // ---- simple things
     if (entry.selfHeal) { const r = await this.io.roll(entry.selfHeal.f, { label: `${A.name}: ${entry.name}`, by: card.by }); this.applyHeal(A, r.total, card); card.lines.push({ t: `${A.name} ${entry.selfHeal.label ? '— ' + r.total + ' ' + entry.selfHeal.label : 'regains ' + r.total + ' HP'}`, c: 'heal' }); }
+    if (entry.rollOnly) { const r = await this.io.roll(entry.rollOnly.f, { label: `${A.name}: ${entry.name}`, by: card.by }); card.lines.push({ t: `${entry.name}: ${r.total}${entry.rollOnly.label ? ' · ' + entry.rollOnly.label.replace('{half}', Math.floor(r.total / 2)) : ''}` }); }
+    if (entry.selfTempPerLevel) { const n = entry.selfTempPerLevel * Math.max(1, level); this.applyHeal(A, n, card, { temp: true }); card.lines.push({ t: `${A.name} gains ${n} temporary HP`, c: 'heal' }); }
     if (entry.selfTemp) { this.applyHeal(A, entry.selfTemp, card, { temp: true }); card.lines.push({ t: `${A.name} gains ${entry.selfTemp} temporary HP`, c: 'heal' }); }
     if (entry.restoreSlot && A.kind === 'pc') { const st = A.char.state ||= {}; st.slots ||= {}; let done = false; for (let l = entry.restoreSlot; l >= 1; l--) if (st.slots[l]) { st.slots[l]--; card.lines.push({ t: `Recovered a level ${l} slot` }); done = true; break; } if (!done) card.lines.push({ t: 'No spent slot to recover', c: 'muted' }); }
     if (entry.restorePact && A.kind === 'pc') { const st = A.char.state ||= {}; if (st.pact) { st.pact--; card.lines.push({ t: 'Recovered a Pact Magic slot' }); } else card.lines.push({ t: 'No spent Pact Magic slot', c: 'muted' }); }
@@ -524,6 +528,8 @@ export class Engine {
   applyNamedEffect(A, T, spec, card, conc) {
     const mods = { ...(spec.mods || {}) };
     if (mods.advFrom === 'self') mods.advFrom = A.key;
+    if (mods.damageFrom?.key === 'self') mods.damageFrom = { ...mods.damageFrom, key: A.key };
+    if (mods.critFrom?.key === 'self') mods.critFrom = { ...mods.critFrom, key: A.key };
     this.addEffect(T, { key: spec.key || spec.name, name: spec.name, icon: spec.icon, mods, origin: { key: A.key, name: A.name }, conc: conc ? A.key : null, rounds: spec.rounds ?? null, tickOn: A.key, statuses: spec.statuses || [] }, card);
     card.lines.push({ t: `${spec.name} on ${T.name}${spec.rounds ? ` (${fmtRounds(spec.rounds)})` : ''}` });
   }
@@ -535,7 +541,7 @@ export class Engine {
     if (special?.markTarget) mods.damageFrom = { key: A.key, f: special.markTarget.f, type: special.markTarget.type };
     if (special?.mods) Object.assign(mods, special.mods);
     return { key: spell.id, name: e.name || spell.name, icon: special?.icon || iconFor(e), mods, origin: { key: A.key, name: A.name }, conc: conc ? A.key : null,
-      rounds: spell.id === 'shield' ? 1 : durationRounds(spell.duration), tickOn: A.key, statuses: e.statuses || [] };
+      rounds: e.rounds ?? (spell.id === 'shield' ? 1 : durationRounds(spell.duration)), tickOn: A.key, statuses: e.statuses || [] };
   }
 
   applySpellEffects(A, spell, act, targets, card, { special, conc, opts }) {
@@ -577,7 +583,7 @@ export class Engine {
       }
       if (p.f && !n) { parts.push({ f: evalFormula(p.f, A), type: opts.trueStrike && entry.kind === 'weapon' ? 'radiant' : p.type }); return; }
       const type = (opts.trueStrike && i === 0) ? 'radiant' : (opts.dmgType && p.types?.includes(opts.dmgType)) ? opts.dmgType : p.type;
-      parts.push({ f: dice(crit ? n * 2 : n, d, b), type });
+      parts.push({ f: dice(crit ? n * 2 : n, d, b), type, half: !!p.half });
     });
     if (entry.vsUndead && target?.type?.includes('undead')) parts.push({ f: dice(crit ? 2 : 1, entry.vsUndead.d, 0), type: entry.vsUndead.type });
     return parts;
@@ -598,6 +604,7 @@ export class Engine {
       if (kind === 'melee' && act.attack.range && dist > (act.attack.reach || 5)) kind = 'ranged';
       const { adv, dis } = this.attackMode(A, T, kind, dist, isSpell || !!act.attack.spell);
       if (opts.adv) adv.push('chosen'); if (opts.dis) dis.push('chosen');
+      if (entry.advantage) adv.push(entry.advantage === true ? entry.name : entry.advantage);
       const mode = adv.length && !dis.length ? '2d20kh' : dis.length && !adv.length ? '2d20kl' : '1d20';
       let penalty = '';
       for (const e of T.effects || []) if (e.mods?.attackedPenalty) penalty += '-' + e.mods.attackedPenalty;
@@ -607,7 +614,8 @@ export class Engine {
       for (const e of [...A.effects]) if (e.mods?.disNextAttack) this.removeEffect(A, e.id);
       const ac = acOf(T);
       const nat = r.nat ?? r.terms.find(t => t.kind === 'dice')?.results.find(x => !x.dropped)?.v;
-      const critRange = A.kind === 'pc' && A.sheet?.critRange ? A.sheet.critRange : 20;
+      let critRange = A.kind === 'pc' && A.sheet?.critRange ? A.sheet.critRange : 20;
+      for (const e of T.effects || []) if (e.mods?.critFrom?.key === A.key) critRange = Math.min(critRange, e.mods.critFrom.range || 19);
       let hit = nat >= critRange || (nat !== 1 && r.total >= ac);
       let crit = hit && (nat >= critRange || (kind === 'melee' && dist <= 5 && ['paralyzed', 'unconscious'].some(c => has(T, c))));
       const advTxt = mode === '1d20' ? '' : mode === '2d20kh' ? ` (adv: ${adv.join(', ')})` : ` (dis: ${dis.join(', ')})`;
@@ -619,6 +627,13 @@ export class Engine {
       const extras = [];
       for (const e of T.effects || []) if (e.mods?.damageFrom && e.mods.damageFrom.key === A.key) extras.push({ f: critDouble(e.mods.damageFrom.f, crit), type: e.mods.damageFrom.type, why: e.name });
       if (act.weapon || entry.kind === 'weapon') for (const e of A.effects || []) if (e.mods?.weaponDamage) extras.push({ f: critDouble(e.mods.weaponDamage.f, crit), type: e.mods.weaponDamage.type, why: e.name });
+      if (entry.oncePerTurn && !flags['once:' + entry.id]) { flags['once:' + entry.id] = true; extras.push({ f: critDouble(entry.oncePerTurn.f, crit), type: entry.oncePerTurn.type, why: entry.oncePerTurn.label }); }
+      if (opts.boomingBlade) {
+        const n = cantripTier(A.level) - 1;
+        if (n > 0) extras.push({ f: critDouble(n + 'd8', crit), type: 'thunder', why: 'Booming Blade' });
+        this.addEffect(T, { key: 'booming-blade', name: 'Booming Blade', icon: 'burning', mods: {}, origin: { key: A.key, name: A.name }, rounds: 1, tickOn: A.key }, card);
+        card.lines.push({ t: `${T.name} is sheathed in booming energy: if it moves willingly before ${A.name}'s next turn it takes ${cantripTier(A.level)}d8 thunder`, c: 'muted' });
+      }
       if (opts.trueStrike && A.level >= 5) extras.push({ f: critDouble(A.level >= 17 ? '3d6' : A.level >= 11 ? '2d6' : '1d6', crit), type: 'radiant', why: 'True Strike' });
       // Divine Smite
       if (opts.smite && A.kind === 'pc' && kind === 'melee') {
@@ -670,7 +685,7 @@ export class Engine {
       const r2 = await this.io.roll(formula, { label: `${A.name}: Savage Attacker reroll`, by: card.by });
       if (r2.total > r.total) r = r2;
     }
-    const totals = splitTotals(r, parts);
+    const totals = splitTotals(r, parts).map((t, i) => (parts[i].half ? Math.floor(t / 2) : t));
     let rolled = parts.map((p, i) => ({ type: p.type, total: totals[i] }));
     if (half) rolled = rolled.map(p => ({ ...p, total: Math.floor(p.total / 2) }));
     if (none) rolled = rolled.map(p => ({ ...p, total: 0 }));
@@ -719,8 +734,8 @@ export class Engine {
       const formula = parts.map(p => p.f).join('+').replace(/\+-/g, '-');
       dmgRoll = await this.io.roll(formula, { label: `${A.name}: ${entry.name} damage`, by: card.by });
     }
-    card.lines.push({ t: `${ABIL_NAME[abil]} save, DC ${dc}${dmgRoll ? ` · ${dmgRoll.total} damage` : ''}`, c: 'muted' });
-    const totals = dmgRoll ? splitTotals(dmgRoll, parts) : [];
+    card.lines.push({ t: `${act.save.skills ? act.save.skills.join(' or ') + ' check' : ABIL_NAME[abil] + ' save'}, DC ${dc}${dmgRoll ? ` · ${dmgRoll.total} damage` : ''}`, c: 'muted' });
+    const totals = dmgRoll ? splitTotals(dmgRoll, parts).map((t, i) => (parts[i].half ? Math.floor(t / 2) : t)) : [];
     const effects = (entry.effects || []).filter(e => act.effects?.includes(e.id));
     const applies = act.applies || [];
     if (special?.onlyType) {
@@ -729,7 +744,7 @@ export class Engine {
       targets = targets.filter(T => !out.includes(T));
       if (!targets.length) return;
     }
-    const results = await Promise.all(targets.map(T => this.savingThrow(T, abil, dc, { label: entry.name, spell: isSpell }).then(s => ({ T, s }))));
+    const results = await Promise.all(targets.map(T => this.savingThrow(T, abil, dc, { label: entry.name, spell: isSpell, skills: act.save.skills || null }).then(s => ({ T, s }))));
     for (const { T, s } of results) {
       const evasion = abil === 'dex' && act.onSave === 'half' && T.traits.includes('evasion');
       const interpose = abil === 'dex' && act.onSave === 'half' && T.traits.includes('shield master: interpose shield');
@@ -830,6 +845,7 @@ export const SPELL_SPECIAL = {
   'warding-bond': { icon: 'blessed' },
   'hold-person': { onlyType: 'humanoid', note: 'It repeats the save at the end of each of its turns.' },
   'charm-person': { onlyType: 'humanoid' },
+  'grease': { patch: { auto: [{ type: 'save', save: { abil: ['dex'] }, onSave: 'none', applies: ['prone'] }] }, note: 'The grease is Difficult Terrain; anyone entering it or ending a turn there saves again.' },
   'web': { patch: { auto: [{ type: 'save', save: { abil: ['dex'] }, onSave: 'none', applies: ['restrained'] }] }, note: 'The web is Difficult Terrain and Lightly Obscured.' },
   'blur': { patch: { auto: [], selfEffect: { key: 'blur', name: 'Blur', icon: 'invisible', rounds: 10, mods: { attackedDis: true } } } },
   'mirror-image': { patch: { auto: [], selfEffect: { key: 'mirror-image', name: 'Mirror Image (3 duplicates)', icon: 'invisible', rounds: 10 } }, note: 'Each time a creature hits you, roll a d6 per duplicate; any 3+ means a duplicate is hit and destroyed instead.' },

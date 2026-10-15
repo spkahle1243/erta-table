@@ -1,5 +1,13 @@
 [
  {
+  "id": "ash-escanor",
+  "name": "Ash Escanor",
+  "player": "Andy",
+  "series": "erta",
+  "file": "ash-escanor.json",
+  "summary": "Warlock (The Hexblade) 5 / Fighter (Echo Knight) 3"
+ },
+ {
   "id": "boon-gultor",
   "name": "Boon Gultor",
   "player": "Andy",
@@ -8,12 +16,36 @@
   "summary": "Artificer (Artillerist) 12"
  },
  {
+  "id": "dr-gregory-sharpfoot",
+  "name": "Dr. Gregory Sharpfoot",
+  "player": "",
+  "series": "erta",
+  "file": "dr-gregory-sharpfoot.json",
+  "summary": "Artificer (Armorer) 6 / Warlock (The Great Old One) 2"
+ },
+ {
   "id": "orek-opaldigger",
   "name": "Orek Opaldigger",
   "player": "Colin",
   "series": "ironclad",
   "file": "orek-opaldigger.json",
   "summary": "Fighter (Battle Master) 4 / Wizard (Bladesinger) 8"
+ },
+ {
+  "id": "richter-escanor",
+  "name": "Richter Escanor",
+  "player": "",
+  "series": "erta",
+  "file": "richter-escanor.json",
+  "summary": "Fighter (Cavalier) 8"
+ },
+ {
+  "id": "sfillian-crumb",
+  "name": "Sfillian Crumb",
+  "player": "",
+  "series": "erta",
+  "file": "sfillian-crumb.json",
+  "summary": "Bard (College of the Maestro) 7"
  },
  {
   "id": "vali",

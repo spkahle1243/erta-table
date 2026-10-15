@@ -18,7 +18,7 @@ def main(src, spells_path, out_dir):
             else:
                 if s['id'] not in spells: raise SystemExit(f"{c['name']}: unknown spell {s['id']}")
                 base = dict(spells[s['id']])
-            for k in ('always', 'prepared', 'pact', 'ritualOnly'):
+            for k in ('always', 'prepared', 'pact', 'ritualOnly', 'atWill'):
                 if s.get(k): base[k] = True
             resolved.append(base)
         c['spells'] = resolved

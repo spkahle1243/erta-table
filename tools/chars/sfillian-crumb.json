@@ -1,0 +1,418 @@
+{
+ "id": "sfillian-crumb",
+ "name": "Sfillian Crumb",
+ "player": "",
+ "series": "erta",
+ "color": "#6b3d6e",
+ "species": "Half-Elf",
+ "background": "Charlatan",
+ "classes": [
+  {
+   "name": "Bard",
+   "sub": "College of the Maestro",
+   "level": 7,
+   "hd": 8
+  }
+ ],
+ "abilities": {
+  "str": 11,
+  "dex": 14,
+  "con": 11,
+  "int": 17,
+  "wis": 11,
+  "cha": 20
+ },
+ "saveProf": [
+  "dex",
+  "cha"
+ ],
+ "skills": {
+  "Acrobatics": 1,
+  "Animal Handling": 0.5,
+  "Arcana": 1,
+  "Athletics": 0.5,
+  "Deception": 1,
+  "History": 0.5,
+  "Insight": 1,
+  "Intimidation": 0.5,
+  "Investigation": 0.5,
+  "Medicine": 0.5,
+  "Nature": 0.5,
+  "Perception": 0.5,
+  "Performance": 2,
+  "Persuasion": 2,
+  "Religion": 0.5,
+  "Sleight of Hand": 1,
+  "Stealth": 0.5,
+  "Survival": 0.5
+ },
+ "initBonus": 1,
+ "tools": "Viol, pan flute, lute, disguise kit, forgery kit",
+ "ac": 13,
+ "acNote": "Leather armor 11 + Dex 2",
+ "hp": 32,
+ "speed": "30 ft",
+ "size": 1,
+ "senses": "Darkvision 60 ft",
+ "languages": "Common, Elvish, Sylvan",
+ "resist": [],
+ "saveNotes": "Fey Ancestry: advantage on saves against being charmed; magic can't put you to sleep.",
+ "spellcasting": {
+  "ability": "cha",
+  "slots": [
+   4,
+   3,
+   3,
+   1
+  ]
+ },
+ "spells": [
+  {
+   "custom": "eidolic-chains"
+  },
+  {
+   "custom": "thunderous-chord"
+  },
+  "vicious-mockery",
+  "charm-person",
+  "disguise-self",
+  {
+   "custom": "lokis-gift"
+  },
+  "sleep",
+  "hideous-laughter",
+  {
+   "custom": "time-step"
+  },
+  "major-image",
+  "sending",
+  "stinking-cloud",
+  "hallucinatory-terrain"
+ ],
+ "customSpells": {
+  "eidolic-chains": {
+   "name": "Eidolic Chains",
+   "level": 0,
+   "school": "Conjuration",
+   "time": "Action",
+   "range": "30 ft",
+   "duration": "Concentration, up to 1 minute",
+   "conc": true,
+   "comp": "VS",
+   "text": "<p>A creature that you can see within range must succeed on a Strength (Athletics) or Dexterity (Acrobatics) check (its choice) against your spell save DC or become Grappled. It can repeat the check at the start of each of its turns to break free.</p>",
+   "auto": [
+    {
+     "type": "save",
+     "save": {
+      "abil": [
+       "str"
+      ],
+      "skills": [
+       "Athletics",
+       "Acrobatics"
+      ]
+     },
+     "onSave": "none",
+     "effects": [
+      "chains"
+     ]
+    }
+   ],
+   "effects": [
+    {
+     "id": "chains",
+     "name": "Eidolic Chains",
+     "mods": {},
+     "statuses": [
+      "grappled"
+     ]
+    }
+   ]
+  },
+  "thunderous-chord": {
+   "name": "Thunderous Chord",
+   "level": 0,
+   "school": "Evocation",
+   "time": "Action",
+   "range": "60 ft",
+   "duration": "Instantaneous",
+   "conc": false,
+   "comp": "VSM",
+   "text": "<p>A blast of sound heard up to 60 feet away. A creature you can see within range makes a Constitution saving throw or takes 2d4 Thunder damage and is Deafened until the end of its next turn. The damage increases to 4d4 at 5th level, 6d4 at 11th and 8d4 at 17th.</p>",
+   "auto": [
+    {
+     "type": "save",
+     "save": {
+      "abil": [
+       "con"
+      ]
+     },
+     "onSave": "none",
+     "damage": [
+      {
+       "n": 2,
+       "d": 4,
+       "b": "",
+       "type": "thunder",
+       "scale": {
+        "mode": "whole",
+        "n": 1
+       }
+      }
+     ],
+     "effects": [
+      "deaf"
+     ]
+    }
+   ],
+   "effects": [
+    {
+     "id": "deaf",
+     "name": "Deafened",
+     "mods": {},
+     "statuses": [
+      "deafened"
+     ],
+     "rounds": 1
+    }
+   ]
+  },
+  "lokis-gift": {
+   "name": "Loki’s Gift",
+   "level": 1,
+   "school": "Enchantment",
+   "time": "Action",
+   "range": "Self",
+   "duration": "1 minute",
+   "conc": false,
+   "comp": "V",
+   "text": "<p>Even the most barefaced lie seems plausible: you have advantage on Charisma (Deception) checks for whatever you're currently saying. If the check fails, the creature knows you tried to manipulate it with magic. Lie to a Friendly creature and if it fails a Charisma save it may reveal an embarrassing secret.</p>",
+   "selfEffect": {
+    "key": "lokis-gift",
+    "name": "Loki’s Gift",
+    "icon": "blessed",
+    "rounds": 10
+   }
+  },
+  "time-step": {
+   "name": "Time Step",
+   "level": 2,
+   "school": "Conjuration",
+   "time": "Action",
+   "range": "Self",
+   "duration": "Instantaneous",
+   "conc": false,
+   "comp": "V",
+   "text": "<p>You briefly step forward in time: you disappear and reappear at the start of your next turn within 30 feet of where you vanished. Nothing can affect you in between, and you aren't aware of what happens meanwhile.</p>"
+  }
+ },
+ "resources": [
+  {
+   "id": "bi",
+   "name": "Bardic Inspiration (d8)",
+   "max": 7,
+   "recover": "sr"
+  },
+  {
+   "id": "crescendo",
+   "name": "Frenetic Crescendo",
+   "max": 1,
+   "recover": "lr"
+  }
+ ],
+ "actions": [
+  {
+   "id": "rapier",
+   "name": "Rapier",
+   "time": "action",
+   "kind": "weapon",
+   "text": "Melee weapon attack (finesse), reach 5 ft. Hit: 1d8 + Dex Piercing.",
+   "attack": {
+    "kind": "melee",
+    "ability": [
+     "str",
+     "dex"
+    ],
+    "reach": 5
+   },
+   "damage": [
+    {
+     "n": 1,
+     "d": 8,
+     "ability": true,
+     "type": "piercing"
+    }
+   ]
+  },
+  {
+   "id": "dagger",
+   "name": "Dagger",
+   "time": "action",
+   "kind": "weapon",
+   "text": "Melee or thrown (20/60 ft), finesse. Hit: 1d4 + Dex Piercing.",
+   "attack": {
+    "kind": "melee",
+    "ability": [
+     "str",
+     "dex"
+    ],
+    "reach": 5,
+    "range": [
+     20,
+     60
+    ]
+   },
+   "damage": [
+    {
+     "n": 1,
+     "d": 4,
+     "ability": true,
+     "type": "piercing"
+    }
+   ]
+  },
+  {
+   "id": "bardic-inspiration",
+   "name": "Bardic Inspiration",
+   "time": "bonus",
+   "uses": "bi",
+   "text": "Target a creature other than you within 60 ft that can hear you. Within 10 minutes it can add a d8 to one ability check, attack roll or saving throw.",
+   "targetEffect": {
+    "key": "bardic-inspiration",
+    "name": "Bardic Inspiration (d8)",
+    "icon": "blessed",
+    "rounds": 100
+   }
+  },
+  {
+   "id": "guiding-tone",
+   "name": "Guiding Tone (Fermata)",
+   "time": "bonus",
+   "uses": "bi",
+   "text": "Expend a Bardic Inspiration die; a creature other than you within 60 ft makes a Wisdom save against your spell DC or takes Psychic damage equal to half the die and is pushed 10 ft in a direction you choose. It can fail on purpose.",
+   "save": {
+    "abil": [
+     "wis"
+    ]
+   },
+   "onSave": "none",
+   "damage": [
+    {
+     "n": 1,
+     "d": 8,
+     "half": true,
+     "type": "psychic"
+    }
+   ]
+  },
+  {
+   "id": "crash",
+   "name": "Crash (Marcato)",
+   "time": "reaction",
+   "uses": "bi",
+   "text": "When a creature other than you within 60 ft hits with an attack, expend a Bardic Inspiration die. The target of that attack makes a Strength save against your spell DC or takes Thunder damage equal to half the die and is knocked Prone. Target the creature that was hit.",
+   "save": {
+    "abil": [
+     "str"
+    ]
+   },
+   "onSave": "none",
+   "damage": [
+    {
+     "n": 1,
+     "d": 8,
+     "half": true,
+     "type": "thunder"
+    }
+   ],
+   "applies": [
+    "prone"
+   ]
+  },
+  {
+   "id": "dissonance",
+   "name": "Dissonance (Discordia)",
+   "time": "reaction",
+   "uses": "bi",
+   "text": "When a creature within 60 ft makes a saving throw, expend a Bardic Inspiration die and reduce its save by half the number rolled (after the roll, before the DM says whether it succeeds).",
+   "rollOnly": {
+    "f": "1d8",
+    "label": "the save drops by {half}"
+   }
+  },
+  {
+   "id": "countercharm",
+   "name": "Countercharm",
+   "time": "action",
+   "text": "Until the end of your next turn, you and friendly creatures within 30 ft have advantage on saves against being Frightened or Charmed.",
+   "selfEffect": {
+    "key": "countercharm",
+    "name": "Countercharm",
+    "icon": "blessed",
+    "rounds": 1,
+    "mods": {}
+   }
+  },
+  {
+   "id": "crescendo",
+   "name": "Frenetic Crescendo",
+   "time": "action",
+   "uses": "crescendo",
+   "text": "Expend any number of Bardic Inspiration uses; for each, give a Bardic Inspiration die to a different creature within 60 ft you can see (one die per creature)."
+  }
+ ],
+ "features": [
+  {
+   "name": "Bardic Inspiration (d8)",
+   "text": "7 uses (Charisma + 2 from Battle Muse), regained on a short or long rest (Font of Inspiration)."
+  },
+  {
+   "name": "Jack of All Trades",
+   "text": "Half proficiency (+1) on ability checks you aren't proficient in, initiative included."
+  },
+  {
+   "name": "Expertise",
+   "text": "Performance and Persuasion."
+  },
+  {
+   "name": "Song of Rest",
+   "text": "Allies who hear you perform during a short rest regain an extra 1d6 HP when they spend Hit Dice."
+  },
+  {
+   "name": "Countercharm",
+   "text": "See Actions."
+  },
+  {
+   "name": "Battle Muse",
+   "text": "Two extra uses of Bardic Inspiration (included)."
+  },
+  {
+   "name": "Symphony of Conflict",
+   "text": "Maestro techniques need a free hand, baton or wand; you must see the target and it must hear you. Crash, Dissonance and Guiding Tone are in Actions."
+  },
+  {
+   "name": "Fey Ancestry",
+   "text": "Advantage on saves against being charmed; magic can't put you to sleep."
+  },
+  {
+   "name": "False Identity",
+   "text": "A second identity with documents and disguises; you can forge documents you've seen examples of."
+  }
+ ],
+ "inventory": [
+  "Rapier",
+  "Dagger",
+  "Leather armor",
+  "Lute",
+  "Pan flute",
+  "Entertainer's pack (bedroll, 2 costumes, 5 candles, rations, waterskin, disguise kit)",
+  "A candle that can't be lit",
+  "45 gp"
+ ],
+ "token": "Sfillian Crumb, a young half-elf bard and charlatan: pale skin, sharp features, brown eyes, untidy black hair, a sly lopsided grin, a flamboyant patchwork jacket stitched with faintly glowing thread, a lute slung across his back and a rapier at his hip, one hand raised mid-flourish like a conductor. Sardonic and theatrical.",
+ "flags": [
+  "Level: the file is named Lvl 8, but the sheet inside says Bard 7 (23,000 XP, spell slots 4/3/3/1, 32 HP). I built him as level 7; send an updated sheet if he's 8.",
+  "Spells use the 2024 rules text where the table has them (Vicious Mockery 1d6, Sleep makes targets Incapacitated then Unconscious). Eidolic Chains, Thunderous Chord, Loki’s Gift and Time Step are written from the sheet.",
+  "Maestro techniques that deal half a Bardic Inspiration die roll the d8 and halve it automatically."
+ ]
+}

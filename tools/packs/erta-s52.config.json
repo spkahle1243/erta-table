@@ -1,0 +1,110 @@
+{
+  "id": "erta-s52",
+  "series": "erta",
+  "built": "2026-10-14",
+  "styleLocks": {
+    "art": "Painterly fantasy concept art, warm late-summer light over a river-trade city, muted earth tones with bright silk accents and an uncanny emerald-green undertone, soft atmospheric haze, cinematic composition, highly detailed environment, 16:9 aspect ratio.",
+    "token": "Painterly fantasy token portrait for a virtual tabletop, warm late-summer light, muted earth tones with bright silk accents and an uncanny emerald-green undertone. Head and shoulders (or the creature's head and upper body) centred and facing the viewer, the whole subject inside a central circle with a little margin, plain dark hazy background, square 1:1 image, no border, no ring, no text, no watermark."
+  },
+  "clockContainers": {
+    "clocks": "order,druder,thinning"
+  },
+  "clocks": [
+    {
+      "key": "order",
+      "name": "The Umbral Order",
+      "size": 8,
+      "start": 3,
+      "visible": false,
+      "goal": "Breach the Whisperwind Halls"
+    },
+    {
+      "key": "druder",
+      "name": "Druder & the Opalcrests",
+      "size": 6,
+      "start": 0,
+      "visible": false,
+      "goal": "Deliver Leath to the buyer (starts tonight)"
+    },
+    {
+      "key": "thinning",
+      "name": "The Thinning",
+      "size": 8,
+      "start": 5,
+      "visible": false,
+      "goal": "Planar unrest; +1 every 2 sessions"
+    }
+  ],
+  "actors": {
+    "druder": {
+      "base": "spy",
+      "name": "Druder Craggy",
+      "set": {
+        "ac": 13
+      },
+      "notes": "<p>Here to perform, not fight. One hand (right sleeve pinned). Crushes the <b>Greater Moth-Step Cocoon</b> at his curtain line: everyone gets one action, then he and Leath are gone, whatever happens. A second cocoon up his sleeve is the backstop.</p>",
+      "token": "Druder Craggy, a disgraced middle-aged human bard: a thin face ruined around the eyes by drink but lit with fierce theatrical joy, greying hair worn long, a threadbare plum-coloured coat with the right sleeve pinned up below the elbow, a battered lute against his shoulder, a pale white moth crawling out of his left cuff. Charming, wounded and dangerous."
+    },
+    "knuckle": {
+      "base": "tough",
+      "name": "Knuckle Garro",
+      "notes": "<p>The big, slow stagehand by the door. Flees once Druder is gone.</p>",
+      "token": "Knuckle Garro, a big slow-witted hired thug dressed as a silk tender: broad shoulders, shaved head, a broken nose, clean hands that have never tended silk, a cudgel resting on one shoulder. Heavy and patient."
+    },
+    "spool": {
+      "base": "bandit",
+      "name": "Spool Dace",
+      "notes": "<p>The wiry stagehand by the crane. Surrenders when grappled and talks within minutes: the Opalcrests are paying; the buyer is at <b>Wrenmouth</b>, below the upper falls.</p>",
+      "token": "Spool Dace, a wiry, twitchy young bandit posing as a silk tender: narrow face, darting eyes, a knit cap, threads of white silk caught on his sleeves, a short blade held low. Nervous and quick."
+    },
+    "mirela": {
+      "base": "scout",
+      "name": "Mirela",
+      "notes": "<p>Masked, poling the skiff in the reeds below the cliff. Takes Druder and Leath upriver.</p>",
+      "token": "Mirela, a lean masked river scout: a dark cloth mask over the lower face, sharp grey eyes, river-stained leathers, a long punting pole and a shortbow across her back, reeds behind her. Silent and watchful."
+    }
+  },
+  "encounters": [
+    {
+      "key": "six-seconds",
+      "name": "Six Seconds",
+      "section": "s5",
+      "scene": "art-silkcliff-at-dusk",
+      "xp": 0,
+      "difficulty": "one round",
+      "anchor": "#s5 .check.six",
+      "groups": [
+        {
+          "label": "In the hut",
+          "foes": [
+            {
+              "actor": "druder",
+              "count": 1,
+              "name": "Druder Craggy"
+            },
+            {
+              "actor": "knuckle",
+              "count": 1,
+              "name": "Knuckle Garro"
+            },
+            {
+              "actor": "spool",
+              "count": 1,
+              "name": "Spool Dace"
+            }
+          ]
+        },
+        {
+          "label": "In the skiff below",
+          "foes": [
+            {
+              "actor": "mirela",
+              "count": 1,
+              "name": "Mirela"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

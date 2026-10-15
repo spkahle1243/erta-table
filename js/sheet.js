@@ -59,7 +59,8 @@ export function renderSheet(view, H, ui = {}) {
   // concentration and effects
   const fx = el('div', { class: 'sh-fx' });
   if (view.concentration) fx.append(el('span', { class: 'chip conc' }, `Concentrating: ${view.concentration}`, el('button', { class: 'x', type: 'button', title: 'End concentration', onclick: () => H.endConc() }, '×')));
-  for (const e of view.effects || []) fx.append(el('span', { class: 'chip', title: e.origin ? 'From ' + e.origin : '' }, e.name + (e.rounds != null ? ` · ${fmtR(e.rounds)}` : '')));
+  for (const e of view.effects || []) fx.append(el('span', { class: 'chip', title: e.origin ? 'From ' + e.origin : '' }, e.name + (e.rounds != null ? ` · ${fmtR(e.rounds)}` : ''),
+    H.endEffect && !e.conc ? el('button', { class: 'x', type: 'button', title: 'End this effect', 'aria-label': 'End ' + e.name, onclick: () => H.endEffect(e.id) }, '×') : null));
   if (fx.children.length) head.append(fx);
   if (ch.hp.value <= 0) {
     const d = state.death || { s: 0, f: 0 };
@@ -108,7 +109,7 @@ export function renderSheet(view, H, ui = {}) {
     const sk = el('div', { class: 'sh-skills' });
     for (const name of Object.keys(SKILL_ABIL)) {
       const p = sheet.skills?.[name] || 0;
-      sk.append(el('button', { class: 'sk' + (p ? ' prof' : '') + (p >= 2 ? ' exp' : ''), type: 'button', onclick: () => H.check('skill', name, takeMode()), title: sheet.skillNotes?.[name] || '' },
+      sk.append(el('button', { class: 'sk' + (p >= 1 ? ' prof' : '') + (p >= 2 ? ' exp' : ''), type: 'button', onclick: () => H.check('skill', name, takeMode()), title: sheet.skillNotes?.[name] || '' },
         el('span', {}, name, el('small', {}, ' ' + SKILL_ABIL[name].toUpperCase())), el('b', {}, sgn(n.skill(name)))));
     }
     body.append(sk, el('p', { class: 'sh-note' }, `Passive Perception ${n.passive}. ${sheet.senses && sheet.senses !== '—' ? sheet.senses + '.' : ''} Tools: ${sheet.tools || '—'}. Languages: ${sheet.languages || '—'}.`));
@@ -182,6 +183,7 @@ export function renderSheet(view, H, ui = {}) {
       f.append(el('label', { class: 'stack' }, el('span', { class: 'small muted' }, `Maneuver on a hit (${left} dice left)`), sel));
     }
     if (a.riders?.includes('trueStrike')) f.append(check('Cast True Strike (use Int, Radiant)', v => { o.trueStrike = v; }));
+    if (a.riders?.includes('boomingBlade')) f.append(check('Cast Booming Blade (extra Thunder now, more if it moves)', v => { o.boomingBlade = v; }));
     if (a.poolHeal) {
       const res = sheet.resources.find(r => r.id === a.pool), left = res.max - (state.used?.[res.id] || 0);
       const amt = el('input', { type: 'number', min: 1, max: left, value: Math.min(10, left), 'aria-label': 'HP to restore' });
@@ -238,6 +240,7 @@ export function renderSheet(view, H, ui = {}) {
   function spellRow(s, prepared, ritualOnly) {
     const auto = s.auto?.[0];
     const info = [s.level ? `L${s.level}` : 'Cantrip', s.time];
+    if (s.atWill) info.push('At will');
     if (s.conc) info.push('Conc.');
     if (s.ritual) info.push('Ritual');
     if (auto?.type === 'attack') info.push(sgn(n.spellAttack) + ' to hit');
@@ -249,7 +252,7 @@ export function renderSheet(view, H, ui = {}) {
     const can = prepared && canCast(s);
     const star = el('button', { class: 'star' + (prepared ? ' on' : ''), type: 'button', title: prepared ? 'Prepared (click to unprepare)' : 'Prepare', 'aria-label': 'Prepared', disabled: s.always || s.level === 0, onclick: () => H.setState({ prep: { [s.id]: !prepared } }) }, '★');
     return row([star, s.name], info.join(' · '), s.text, prepared || ritualOnly ? [
-      el('button', { class: 'btn small primary', type: 'button', disabled: !can && !(ritualOnly || s.ritual), onclick: e => (needsOptions(s) ? spellOptions(e, s, ritualOnly) : H.use(s, { src: 'spell', id: s.id, slot: s.level, opts: { ...modeOpts(), ritual: ritualOnly, focusDamage: !!sc().focusDamage } })) }, ritualOnly ? 'Ritual' : 'Cast'),
+      el('button', { class: 'btn small primary', type: 'button', disabled: !can && !(ritualOnly || s.ritual), onclick: e => { if (needsOptions(s)) return spellOptions(e, s, ritualOnly); const ap = autoPact(s); H.use(s, { src: 'spell', id: s.id, slot: ap ? sc().pact.level : s.level, pact: ap, opts: { ...modeOpts(), ritual: ritualOnly, focusDamage: !!sc().focusDamage } }); } }, ritualOnly ? 'Ritual' : 'Cast'),
       el('button', { class: 'btn small', type: 'button', 'aria-label': 'Options', onclick: e => spellOptions(e, s, ritualOnly) }, '⋯')] : []);
   }
   function sc() { return sheet.spellcasting || {}; }
@@ -257,11 +260,16 @@ export function renderSheet(view, H, ui = {}) {
   function slotsLeft(lv) { return (sc().slots?.[lv - 1] || 0) - (state.slots?.[lv] || 0); }
   function pactOk(s) { const p = sc().pact; return p && (state.pact || 0) < p.max && p.level >= s.level; }
   function canCast(s) {
-    if (!s.level) return true;
+    if (!s.level || s.atWill) return true;
     for (let lv = s.level; lv <= (sc().slots?.length || 0); lv++) if (slotsLeft(lv) > 0) return true;
     return pactOk(s);
   }
+  // Only Pact Magic can cast it (a warlock, or no regular slot left of that level or higher)
+  function hasSlotFor(s) { for (let lv = s.level; lv <= (sc().slots?.length || 0); lv++) if (slotsLeft(lv) > 0) return true; return false; }
+  function autoPact(s) { return !!(s.level && !s.atWill && !hasSlotFor(s) && pactOk(s)); }
   function needsOptions(s) {
+    if (s.atWill) return false;
+    if (autoPact(s)) return (s.auto || []).length > 1 || (s.auto?.[0]?.damage?.[0]?.types?.length || 0) > 1;
     if (!s.level) return (s.auto?.[0]?.damage?.[0]?.types?.length || 0) > 1;
     if (slotsLeft(s.level) <= 0) return true; // must choose a higher slot or pact
     if ((s.auto || []).length > 1 || (s.auto?.[0]?.damage?.[0]?.types?.length || 0) > 1) return true;
@@ -327,7 +335,7 @@ function dmgText(p, abilMod, nOverride) {
   let b = typeof p.b === 'number' ? p.b : (p.b && /^-?\d+$/.test(p.b) ? Number(p.b) : 0);
   if (p.ability) b += abilMod;
   if (typeof p.b === 'string' && /@mod/.test(p.b)) b += abilMod;
-  return `${nn && p.d ? nn + 'd' + p.d : ''}${b ? (nn ? (b > 0 ? '+' : '') : '') + b : ''} ${p.type || ''}`.trim();
+  return `${p.half ? 'half ' : ''}${nn && p.d ? nn + 'd' + p.d : ''}${b ? (nn ? (b > 0 ? '+' : '') : '') + b : ''} ${p.type || ''}`.trim();
 }
 function stat(k, v) { return el('div', { class: 'st' }, el('span', { class: 'k' }, k), el('b', {}, String(v ?? '—'))); }
 function btnStat(k, v, fn) { return el('button', { class: 'st', type: 'button', onclick: fn, title: 'Roll ' + k }, el('span', { class: 'k' }, k), el('b', {}, String(v))); }

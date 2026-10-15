@@ -1,0 +1,201 @@
+{
+ "id": "richter-escanor",
+ "name": "Richter Escanor",
+ "player": "",
+ "series": "erta",
+ "color": "#2A4865",
+ "species": "Human",
+ "background": "Folk Hero",
+ "classes": [
+  {
+   "name": "Fighter",
+   "sub": "Cavalier",
+   "level": 8,
+   "hd": 10
+  }
+ ],
+ "abilities": {
+  "str": 20,
+  "dex": 11,
+  "con": 18,
+  "int": 12,
+  "wis": 12,
+  "cha": 14
+ },
+ "saveProf": [
+  "str",
+  "con"
+ ],
+ "skills": {
+  "Animal Handling": 1,
+  "Insight": 1,
+  "Investigation": 1,
+  "Perception": 2,
+  "Persuasion": 1,
+  "Survival": 1
+ },
+ "tools": "Land vehicles, smith's tools",
+ "ac": 19,
+ "acNote": "Assumed plate 18 + Fighting Style: Defense 1 (the sheet lists no armor)",
+ "hp": 85,
+ "speed": "30 ft",
+ "size": 1,
+ "senses": "—",
+ "languages": "Common, Dwarvish",
+ "resist": [],
+ "saveNotes": "Born to the Saddle: advantage on saves to avoid falling off your mount.",
+ "resources": [
+  {
+   "id": "second-wind",
+   "name": "Second Wind",
+   "max": 1,
+   "recover": "sr"
+  },
+  {
+   "id": "action-surge",
+   "name": "Action Surge",
+   "max": 1,
+   "recover": "sr"
+  },
+  {
+   "id": "mark",
+   "name": "Unwavering Mark strikes",
+   "max": 5,
+   "recover": "lr"
+  },
+  {
+   "id": "warding",
+   "name": "Warding Maneuver",
+   "max": 4,
+   "recover": "lr"
+  }
+ ],
+ "actions": [
+  {
+   "id": "richterstorm",
+   "name": "Richterstorm",
+   "time": "action",
+   "kind": "weapon",
+   "text": "Melee weapon attack, reach 5 ft. Hit: 1d8 + Str Slashing; versatile 1d10. Extra Attack: two attacks with the Attack action. When you hit, the target is marked by Unwavering Mark (use the Mark button).",
+   "attack": {
+    "kind": "melee",
+    "ability": [
+     "str"
+    ],
+    "reach": 5
+   },
+   "damage": [
+    {
+     "n": 1,
+     "d": 8,
+     "ability": true,
+     "type": "slashing"
+    }
+   ],
+   "versatile": {
+    "n": 1,
+    "d": 10
+   }
+  },
+  {
+   "id": "unwavering-mark",
+   "name": "Unwavering Mark",
+   "time": "special",
+   "text": "When you hit a creature with a melee weapon attack, mark it until the end of your next turn. While it's within 5 ft of you it has disadvantage on attacks that don't target you. If it damages anyone else, you can make a Mark Strike as a bonus action on your next turn.",
+   "targetEffect": {
+    "key": "unwavering-mark",
+    "name": "Marked by Richter",
+    "icon": "marked",
+    "rounds": 2
+   }
+  },
+  {
+   "id": "mark-strike",
+   "name": "Mark Strike",
+   "time": "bonus",
+   "kind": "weapon",
+   "uses": "mark",
+   "advantage": "Unwavering Mark",
+   "text": "Special melee attack against a creature you marked that damaged someone else: advantage, and +4 damage on a hit.",
+   "attack": {
+    "kind": "melee",
+    "ability": [
+     "str"
+    ],
+    "reach": 5
+   },
+   "damage": [
+    {
+     "n": 1,
+     "d": 8,
+     "ability": true,
+     "b": 4,
+     "type": "slashing"
+    }
+   ]
+  },
+  {
+   "id": "warding-maneuver",
+   "name": "Warding Maneuver",
+   "time": "reaction",
+   "uses": "warding",
+   "text": "When you or a creature within 5 ft is hit by an attack while you hold a melee weapon or shield, roll 1d8 and add it to the target's AC. If the attack still hits, the target has resistance to its damage.",
+   "rollOnly": {
+    "f": "1d8",
+    "label": "add it to the AC against that attack"
+   }
+  },
+  {
+   "id": "second-wind",
+   "name": "Second Wind",
+   "time": "bonus",
+   "uses": "second-wind",
+   "text": "Regain 1d10 + 8 HP.",
+   "selfHeal": {
+    "f": "1d10+8"
+   }
+  },
+  {
+   "id": "action-surge",
+   "name": "Action Surge",
+   "time": "special",
+   "uses": "action-surge",
+   "text": "Take one additional action this turn."
+  }
+ ],
+ "features": [
+  {
+   "name": "Fighting Style: Defense",
+   "text": "+1 AC while wearing armor (included)."
+  },
+  {
+   "name": "Extra Attack",
+   "text": "Attack twice when you take the Attack action."
+  },
+  {
+   "name": "Born to the Saddle",
+   "text": "Advantage on saves to avoid falling off your mount; land on your feet from falls of 10 ft or less; mounting costs 5 ft."
+  },
+  {
+   "name": "Unwavering Mark",
+   "text": "See Actions (5 Mark Strikes per long rest)."
+  },
+  {
+   "name": "Warding Maneuver",
+   "text": "See Actions (4 per long rest)."
+  },
+  {
+   "name": "Rustic Hospitality",
+   "text": "Common folk will hide and shelter you, short of risking their lives."
+  }
+ ],
+ "inventory": [
+  "Richterstorm",
+  "Plate armor (assumed)"
+ ],
+ "token": "Richter Escanor, a short, powerfully built young human cavalier: square jaw, determined eyes, plate armour scarred from many fights, a stormy-blue cloak, holding Richterstorm, a longsword with a crackling storm-blue crystal in its pommel and faint lightning running along the blade. Steady, loyal and immovable.",
+ "flags": [
+  "Gear: Richter's sheet lists no armor and no weapons (it shows AC 10 unarmored, yet he has the Defense fighting style). I gave him plate (AC 19) and Richterstorm as a longsword (+8 to hit, 1d8 + 5 Slashing). Send his real armor, shield and sword.",
+  "Name: the sheet says “Richter Cavalier”; your campaign notes call him Richter Escanor, so I used that."
+ ]
+}
