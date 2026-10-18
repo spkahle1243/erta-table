@@ -6,6 +6,7 @@ import { iconPaths, COND_BY_ID, condId, condLevel } from './conditions.js';
 import { DISPOSITION_COLORS, cellDistance } from './model.js';
 import { clamp } from './util.js';
 import * as geo from './geometry.js';
+import { blockers, visPolygon, pointInPoly, pxPerFt, doorHandle } from './vision.js';
 
 const CONE_HALF = geo.CONE_HALF;
 const BACKDROP = '#0d1213';
@@ -34,6 +35,13 @@ export class MapView {
     this.action = null;
     this.pointers = new Map();
     this.myColor = opts.color || '#66C39D';
+    this.showWalls = false;      // DM: draw walls and lights even outside the wall tools
+    this.previewVision = false;  // DM: show what the party's tokens can see
+    this.visMask = document.createElement('canvas');
+    this.visTint = document.createElement('canvas');
+    this.explored = new Map();   // sceneId -> canvas of everywhere this viewer has seen
+    this._visPolys = [];
+    this._visKey = null;
     this.dirty = true;
     this._bind();
     this._resize();
@@ -75,6 +83,7 @@ export class MapView {
   isFogged(x, y) { return !!this.scene?.fog.on && this.fog.fogged(x, y); }
 
   setTool(t) { this.tool = t; this.action = null; this.canvas.dataset.tool = t; if (!t.startsWith('tpl:')) this._cancelPlacing(); this.dirty = true; }
+  resetExplored(sceneId) { if (sceneId) this.explored.delete(sceneId); else this.explored.clear(); this._visKey = null; this.dirty = true; }
   setTargets(map) { this.targets = map || new Map(); this.dirty = true; }
 
   // Place a fixed-size area for a spell or action; cb(template) on release, cb(null) if cancelled.
@@ -201,13 +210,32 @@ export class MapView {
     }
     const w = this.toWorld(e.clientX, e.clientY);
     const start = { sx: e.clientX, sy: e.clientY, wx: w.x, wy: w.y };
+    if (e.button === 2 && this.role === 'dm') {
+      if (this.tool === 'wall' || this.tool === 'door') { const wl = this.hitWall(w.x, w.y); if (wl) { this.o.onWallRemove?.(wl.id); this.action = { kind: 'none' }; return; } }
+      if (this.tool === 'light') { const l = this.hitLight(w.x, w.y); if (l) { this.o.onLightRemove?.(l.id); this.action = { kind: 'none' }; return; } }
+      const d = this.hitDoor(w.x, w.y);
+      if (d) { this.o.onDoorContext?.(d.id, e.clientX, e.clientY); this.action = { kind: 'none' }; return; }
+    }
     if (e.button === 1 || e.button === 2) {
       const t = e.button === 2 ? this.hitToken(w.x, w.y) : null;
       this.action = { kind: 'pan', ...start, cx: this.cam.x, cy: this.cam.y, ctxToken: t?.id, button: e.button };
       return;
     }
     const tool = this.tool;
+    if (tool === 'wall' || tool === 'door') {
+      const p = this.snapWall(w.x, w.y, e.shiftKey);
+      this.action = { kind: 'wall', door: tool === 'door', x1: p.x, y1: p.y, x2: p.x, y2: p.y, free: e.shiftKey };
+      this.dirty = true; return;
+    }
+    if (tool === 'light') {
+      const { cx, cy } = this.cellAt(w.x, w.y);
+      const p = e.shiftKey ? w : this.cellCenter(cx, cy);
+      this.o.onLightAdd?.(Math.round(p.x), Math.round(p.y));
+      this.action = { kind: 'none' }; return;
+    }
     if (tool === 'select') {
+      const door = this.hitDoor(w.x, w.y);
+      if (door) { this.o.onDoor?.(door.id); this.action = { kind: 'none' }; return; }
       // template delete handle
       if (this.selectedTpl) {
         const tp = this.scene.templates.find(x => x.id === this.selectedTpl);
@@ -312,6 +340,7 @@ export class MapView {
       }
       this.dirty = true; return;
     }
+    if (a.kind === 'wall') { const p = this.snapWall(w.x, w.y, e.shiftKey || a.free); a.x2 = p.x; a.y2 = p.y; this.dirty = true; return; }
     if (a.kind === 'fogrect') { a.x1 = w.x; a.y1 = w.y; this.dirty = true; return; }
     if (a.kind === 'fogbrush') { a.pts.push(w.x, w.y); this.dirty = true; return; }
   }
@@ -342,6 +371,10 @@ export class MapView {
       if (t.shape === 'cube' && t.len < gr.feet) t.len = gr.feet;
       if (this.placing) { this._finishPlacing({ shape: t.shape, x: Math.round(t.x), y: Math.round(t.y), dir: +t.dir.toFixed(4), len: t.len, color: t.color }); this.dirty = true; return; }
       this.o.onTemplateAdd?.({ shape: t.shape, x: Math.round(t.x), y: Math.round(t.y), dir: +t.dir.toFixed(4), len: t.len, color: t.color });
+      this.dirty = true; return;
+    }
+    if (a.kind === 'wall') {
+      if (Math.hypot(a.x2 - a.x1, a.y2 - a.y1) >= this.g * 0.2) this.o.onWallAdd?.({ x1: Math.round(a.x1), y1: Math.round(a.y1), x2: Math.round(a.x2), y2: Math.round(a.y2), door: a.door });
       this.dirty = true; return;
     }
     if (a.kind === 'fogrect') {
@@ -392,6 +425,43 @@ export class MapView {
     }
     return null;
   }
+  hitDoor(wx, wy) {
+    const s = this.scene; if (!s?.walls) return null;
+    const r = this.g * 0.3;
+    for (const w of s.walls) {
+      if (!w.door) continue;
+      const h = doorHandle(w);
+      if (Math.hypot(wx - h.x, wy - h.y) > r) continue;
+      if (this.role !== 'dm' && !this.doorVisible(w)) continue;
+      return w;
+    }
+    return null;
+  }
+  doorVisible(w) {
+    const s = this.scene, h = doorHandle(w);
+    if (this.role === 'dm') return true;
+    if (this.isFogged(h.x, h.y)) return false;
+    if (!s.vision?.on) return true;
+    return this._visPolys.some(p => pointInPoly(p, h.x, h.y));
+  }
+  hitWall(wx, wy) {
+    const s = this.scene; let best = null, bd = this.g * 0.25;
+    for (const w of s.walls || []) { const d = segDist(wx, wy, w); if (d < bd) { bd = d; best = w; } }
+    return best;
+  }
+  hitLight(wx, wy) {
+    const s = this.scene; let best = null, bd = this.g * 0.45;
+    for (const l of s.lights || []) { const d = Math.hypot(wx - l.x, wy - l.y); if (d < bd) { bd = d; best = l; } }
+    return best;
+  }
+  // Wall ends snap to an existing wall's end, else a grid corner (Shift: no snap).
+  snapWall(wx, wy, free) {
+    const s = this.scene, r = this.g * 0.25;
+    for (const w of s.walls || []) for (const [x, y] of [[w.x1, w.y1], [w.x2, w.y2]]) if (Math.hypot(wx - x, wy - y) < r) return { x, y };
+    if (free) return { x: Math.round(wx), y: Math.round(wy) };
+    return this.snapCorner(wx, wy);
+  }
+
   hitTemplate(wx, wy) {
     const s = this.scene;
     for (let i = s.templates.length - 1; i >= 0; i--) if (this.inTemplate(s.templates[i], wx, wy)) return s.templates[i];
@@ -449,6 +519,14 @@ export class MapView {
     if (this.action?.kind === 'tpl') this._drawTemplate(c, this.action.tpl, true, true);
     else if (this.placing && this.cursor) { const o = this.snapCorner(this.cursor.x, this.cursor.y); this._drawTemplate(c, { shape: this.placing.shape, x: o.x, y: o.y, dir: 0, len: this.placing.len, color: this.myColor }, true, true); }
 
+    // what the party can see (players always when vision is on; the DM when previewing)
+    if (s.vision?.on && s.kind !== 'art' && (this.role !== 'dm' || this.previewVision)) {
+      this._updateVision();
+      c.save(); c.globalAlpha = this.role === 'dm' ? 0.75 : 1; c.drawImage(this.visTint, 0, 0, s.width, s.height); c.restore();
+    } else this._visPolys = [];
+    // walls, doors and lights
+    this._drawWalls(c, s);
+
     // tokens
     const order = s.tokens.slice().sort((a, b) => (b.size || 1) - (a.size || 1));
     const dragId = this.action?.kind === 'drag' ? this.action.id : null;
@@ -496,6 +574,101 @@ export class MapView {
       }
       c.save(); c.fillStyle = p.color; c.globalAlpha = Math.max(0, 1 - k);
       c.beginPath(); c.arc(p.x, p.y, 6 / this.cam.z, 0, Math.PI * 2); c.fill(); c.restore();
+    }
+  }
+
+  // ------------------------------------------------------------ vision
+
+  _viewers() {
+    const s = this.scene;
+    return s.tokens.filter(t => t.sight && (this.role !== 'dm' || t.kind === 'pc'));
+  }
+
+  _updateVision() {
+    const s = this.scene;
+    const viewers = this._viewers();
+    const pos = viewers.map(t => { const p = this.tokenPos(t); return `${t.id}:${p.x.toFixed(2)},${p.y.toFixed(2)}:${t.sight.dv}:${t.sight.blind}`; }).join('|');
+    const lit = s.tokens.filter(t => t.light).map(t => { const p = this.tokenPos(t); return `${p.x.toFixed(2)},${p.y.toFixed(2)},${t.light.bright},${t.light.dim}`; }).join('|');
+    const key = [s.id, s.width, s.height, s.grid.size, s.grid.ox, s.grid.oy, s.vision?.light, JSON.stringify(s.walls || []), JSON.stringify(s.lights || []), JSON.stringify(s.unseenLights || []), pos, lit].join('#');
+    if (key === this._visKey) return;
+    this._visKey = key;
+    const k = Math.min(1, 1600 / Math.max(s.width, s.height));
+    const W = Math.max(1, Math.round(s.width * k)), H = Math.max(1, Math.round(s.height * k));
+    const m = this.visMask; m.width = W; m.height = H;
+    const c = m.getContext('2d');
+    c.setTransform(k, 0, 0, k, 0, 0);
+    c.clearRect(0, 0, s.width, s.height);
+    c.fillStyle = '#000';
+    const walls = blockers(s), box = { x0: 0, y0: 0, x1: s.width, y1: s.height }, ft = pxPerFt(s);
+    const lights = [...(s.lights || []), ...(s.unseenLights || []), ...s.tokens.filter(t => t.light).map(t => ({ ...this.tokenCenter(t), ...t.light }))];
+    const lightPolys = s.vision?.light === 'dark' ? lights.map(L => {
+      const r = ((Number(L.bright) || 0) + (Number(L.dim) || 0)) * ft;
+      return { L, r, poly: r > 0 ? visPolygon(walls, L.x, L.y, { x0: Math.max(0, L.x - r), y0: Math.max(0, L.y - r), x1: Math.min(s.width, L.x + r), y1: Math.min(s.height, L.y + r) }) : null };
+    }) : [];
+    const path = pts => { c.beginPath(); for (let i = 0; i < pts.length; i += 2) (i ? c.lineTo : c.moveTo).call(c, pts[i], pts[i + 1]); c.closePath(); };
+    this._visPolys = [];
+    for (const t of viewers) {
+      const o = this.tokenCenter(t);
+      const poly = visPolygon(walls, o.x, o.y, box);
+      this._visPolys.push(poly);
+      c.save(); path(poly); c.clip();
+      if (s.vision?.light !== 'dark') c.fillRect(0, 0, s.width, s.height);
+      else {
+        const r = Math.max(t.sight.dv || 0, t.sight.blind || 0) * ft;
+        if (r > 0) { c.beginPath(); c.arc(o.x, o.y, r, 0, Math.PI * 2); c.fill(); }
+        for (const lp of lightPolys) { if (!lp.poly) continue; c.save(); path(lp.poly); c.clip(); c.beginPath(); c.arc(lp.L.x, lp.L.y, lp.r, 0, Math.PI * 2); c.fill(); c.restore(); }
+      }
+      c.restore();
+    }
+    // remember where this viewer has been
+    let ex = this.explored.get(s.id);
+    if (!ex || ex.width !== W || ex.height !== H) { ex = document.createElement('canvas'); ex.width = W; ex.height = H; this.explored.set(s.id, ex); }
+    if (this.role !== 'dm') ex.getContext('2d').drawImage(m, 0, 0);
+    const t = this.visTint; t.width = W; t.height = H;
+    const tc = t.getContext('2d');
+    tc.globalCompositeOperation = 'source-over'; tc.fillStyle = '#05090a'; tc.fillRect(0, 0, W, H);
+    tc.globalCompositeOperation = 'destination-out';
+    if (this.role !== 'dm') { tc.globalAlpha = 0.42; tc.drawImage(ex, 0, 0); }
+    tc.globalAlpha = 1; tc.drawImage(m, 0, 0);
+    tc.globalCompositeOperation = 'source-over';
+  }
+
+  _drawWalls(c, s) {
+    const dm = this.role === 'dm';
+    const showAll = dm && (this.showWalls || this.tool === 'wall' || this.tool === 'door' || this.tool === 'light');
+    const z = this.cam.z, g = s.grid.size;
+    if (showAll) {
+      c.save(); c.lineCap = 'round';
+      for (const w of s.walls || []) {
+        c.strokeStyle = 'rgba(0,0,0,.6)'; c.lineWidth = 7 / z; c.beginPath(); c.moveTo(w.x1, w.y1); c.lineTo(w.x2, w.y2); c.stroke();
+        c.strokeStyle = w.door ? (w.secret ? '#a98bd6' : w.open ? '#66C39D' : '#d6a73c') : '#E2E8E4';
+        c.lineWidth = 3.5 / z; if (w.door && w.open) c.setLineDash([8 / z, 6 / z]);
+        c.beginPath(); c.moveTo(w.x1, w.y1); c.lineTo(w.x2, w.y2); c.stroke(); c.setLineDash([]);
+        c.fillStyle = '#E2E8E4'; for (const [x, y] of [[w.x1, w.y1], [w.x2, w.y2]]) { c.beginPath(); c.arc(x, y, 3.2 / z, 0, Math.PI * 2); c.fill(); }
+      }
+      const a = this.action;
+      if (a?.kind === 'wall') { c.strokeStyle = a.door ? '#d6a73c' : '#66C39D'; c.lineWidth = 3.5 / z; c.setLineDash([6 / z, 5 / z]); c.beginPath(); c.moveTo(a.x1, a.y1); c.lineTo(a.x2, a.y2); c.stroke(); c.setLineDash([]); }
+      const ft = pxPerFt(s);
+      for (const l of s.lights || []) {
+        c.strokeStyle = 'rgba(242,210,122,.75)'; c.lineWidth = 1.5 / z;
+        c.setLineDash([5 / z, 5 / z]); c.beginPath(); c.arc(l.x, l.y, (Number(l.bright) || 0) * ft, 0, Math.PI * 2); c.stroke();
+        c.strokeStyle = 'rgba(242,210,122,.35)'; c.beginPath(); c.arc(l.x, l.y, ((Number(l.bright) || 0) + (Number(l.dim) || 0)) * ft, 0, Math.PI * 2); c.stroke(); c.setLineDash([]);
+        c.fillStyle = '#F2D27A'; c.beginPath(); c.arc(l.x, l.y, g * 0.14, 0, Math.PI * 2); c.fill();
+        c.strokeStyle = '#111718'; c.lineWidth = g * 0.03; c.stroke();
+      }
+      c.restore();
+    }
+    // door handles: everyone can click these to open and close
+    for (const w of s.walls || []) {
+      if (!w.door || (!dm && !this.doorVisible(w))) continue;
+      const h = doorHandle(w), ang = Math.atan2(w.y2 - w.y1, w.x2 - w.x1);
+      const L = g * 0.42, T = g * 0.16;
+      c.save(); c.translate(h.x, h.y); c.rotate(ang);
+      c.fillStyle = w.open ? 'rgba(17,23,24,.85)' : (w.secret ? '#6b5591' : '#8a5f2a');
+      c.strokeStyle = w.open ? '#66C39D' : '#F2D27A'; c.lineWidth = Math.max(1.5 / z, g * 0.025);
+      roundRect(c, -L / 2, -T / 2, L, T, T / 3); c.fill(); c.stroke();
+      if (w.locked) { c.fillStyle = '#F2D27A'; c.beginPath(); c.arc(0, 0, T * 0.28, 0, Math.PI * 2); c.fill(); }
+      c.restore();
     }
   }
 
@@ -695,6 +868,12 @@ export class MapView {
 function initials(name) {
   const w = String(name || '?').trim().split(/\s+/);
   return (w.length > 1 ? w[0][0] + w[1][0] : w[0].slice(0, 2)).toUpperCase();
+}
+
+function segDist(px, py, w) {
+  const dx = w.x2 - w.x1, dy = w.y2 - w.y1, L = dx * dx + dy * dy;
+  const t = L ? Math.max(0, Math.min(1, ((px - w.x1) * dx + (py - w.y1) * dy) / L)) : 0;
+  return Math.hypot(px - (w.x1 + t * dx), py - (w.y1 + t * dy));
 }
 
 function roundRect(c, x, y, w, h, r) {

@@ -2,6 +2,7 @@
 import { uid, clone } from './util.js';
 import { combatView } from './combat.js';
 import { COND_BY_ID, condId } from './conditions.js';
+import { parseSenses, seesToken, visionOn, tokenCentre } from './vision.js';
 
 export const THEMES = { ironclad: 'Ironclad Inquiries', erta: 'Erta' };
 export const DISPOSITION_COLORS = { hostile: '#c8553d', neutral: '#d6a73c', friendly: '#4f9d69' };
@@ -98,6 +99,46 @@ export function iconsFor(conds = [], effects = []) {
   return out;
 }
 
+// What a token can see with: senses from the sheet or stat block, plus effects (Lamp-Eye Drops,
+// Stonecunning's tremorsense while it lasts).
+export function tokenSight(c, t) {
+  const ch = t.charId && c.characters.find(x => x.id === t.charId);
+  const effects = (ch ? ch.effects : t.effects) || [];
+  const text = ch ? (ch.sheet?.senses || ch.senses || '') : (c.actors?.[t.actorId]?.senses || t.senses || '');
+  const s = parseSenses(text);
+  for (const e of effects) {
+    const m = e.mods || {};
+    if (m.darkvision) s.dv = s.dv ? s.dv + (Number(m.darkvisionBonus) || 0) : Math.max(s.dv, Number(m.darkvision));
+    if (s.tremorIf && /tremorsense/i.test(e.name || '')) s.tremor = s.tremorIf;
+  }
+  return s;
+}
+export function tokenLight(c, t) {
+  const ch = t.charId && c.characters.find(x => x.id === t.charId);
+  const l = ch ? ch.light : t.light;
+  return l && (Number(l.bright) || Number(l.dim)) ? { bright: Number(l.bright) || 0, dim: Number(l.dim) || 0, kind: l.kind || null } : null;
+}
+// Every light on the scene: placed lights plus whatever tokens carry.
+export function sceneLights(c, scene, { skip = null } = {}) {
+  const out = (scene.lights || []).map(l => ({ x: l.x, y: l.y, bright: l.bright, dim: l.dim }));
+  for (const t of scene.tokens) {
+    if (t.hidden || skip?.(t)) continue;
+    const l = tokenLight(c, t); if (!l) continue;
+    const p = tokenCentre(scene, t); out.push({ ...l, x: p.x, y: p.y });
+  }
+  return out;
+}
+const isInvisible = (c, t) => {
+  const ch = t.charId && c.characters.find(x => x.id === t.charId);
+  return ((ch ? ch.conditions : t.conditions) || []).some(v => condId(v) === 'invisible');
+};
+// Can any of the viewer tokens see token t?
+export function visibleToAny(c, scene, viewers, t, lights = sceneLights(c, scene)) {
+  if (!viewers.length) return false;
+  const inv = isInvisible(c, t);
+  return viewers.some(v => v.id === t.id || seesToken(scene, lights, v, tokenSight(c, v), t, { invisible: inv }));
+}
+
 export function isBloodied(hp) { return hp && hp.max > 0 && hp.value > 0 && hp.value <= hp.max / 2; }
 
 // --- what a player is allowed to see
@@ -113,12 +154,24 @@ export function playerView(c, charId, scene, fogged) {
   if (scene) {
     const g = scene.grid.size;
     const tokens = [];
+    const vis = visionOn(scene);
+    const mine = t => (t.charId && t.charId === charId) || (t.owner && t.owner === charId);
+    let viewers = vis ? scene.tokens.filter(t => mine(t) && !t.hidden) : [];
+    if (vis && !viewers.length) viewers = scene.tokens.filter(t => t.charId);
+    const lights = vis ? sceneLights(c, scene) : [];
+    const unseenLights = [];
     for (const t of scene.tokens) {
       if (t.hidden) continue;
       const st = tokenStats(c, t);
       const size = st.size || 1;
       if (!t.charId && scene.fog.on && fogged && fogged(scene.grid.ox + (t.x + size / 2) * g, scene.grid.oy + (t.y + size / 2) * g)) continue;
+      if (vis && !t.charId && !mine(t) && !visibleToAny(c, scene, viewers, { ...t, size }, lights)) {
+        const l = tokenLight(c, t); if (l) { const p = tokenCentre(scene, t); unseenLights.push({ ...l, x: p.x, y: p.y }); }
+        continue;
+      }
       const pub = { id: t.id, name: st.name, x: t.x, y: t.y, size, img: st.img, color: st.color, kind: t.kind, charId: t.charId, owner: t.owner || null, disposition: t.disposition, conditions: st.icons };
+      const light = tokenLight(c, t); if (light) pub.light = light;
+      if (vis && mine(t)) pub.sight = tokenSight(c, t);
       if (t.charId) { pub.hp = st.hp; pub.ac = st.ac; }
       else if (c.settings.monsterHealth === 'full') pub.hp = st.hp;
       else if (c.settings.monsterHealth === 'bloodied') pub.health = st.hp.value <= 0 ? 'down' : isBloodied(st.hp) ? 'bloodied' : 'ok';
@@ -127,11 +180,14 @@ export function playerView(c, charId, scene, fogged) {
     s = {
       id: scene.id, name: scene.name, kind: scene.kind, bg: scene.bg, width: scene.width, height: scene.height,
       grid: clone(scene.grid), fog: { on: scene.fog.on, ops: scene.fog.ops }, tokens, templates: scene.templates,
+      // secret doors look like plain wall to players
+      walls: (scene.walls || []).map(w => (w.secret ? { id: w.id, x1: w.x1, y1: w.y1, x2: w.x2, y2: w.y2 } : w)),
+      lights: scene.lights || [], vision: scene.vision || { on: false, light: 'bright' }, unseenLights,
     };
   }
   return {
     campaign: { name: c.name, theme: c.theme },
-    you: me ? { charId: me.id, name: me.name, color: me.color, sheet: me.sheet || null, state: me.state || {}, effects: (me.effects || []).map(e => ({ id: e.id, name: e.name, rounds: e.rounds, origin: e.origin?.name, conc: !!e.conc })), concentration: me.concentration || null } : null,
+    you: me ? { charId: me.id, name: me.name, color: me.color, sheet: me.sheet || null, state: me.state || {}, effects: (me.effects || []).map(e => ({ id: e.id, name: e.name, rounds: e.rounds, origin: e.origin?.name, conc: !!e.conc })), concentration: me.concentration || null, items: me.items || [], light: me.light || null, reactUsed: !!me.reactUsed } : null,
     party, scene: s,
     audio: { music: c.audio.music, ambience: c.audio.ambience },
     handout: c.handout, paused: c.paused,

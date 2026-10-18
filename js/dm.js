@@ -8,12 +8,16 @@ import { MapView } from './render.js';
 import { FogMask, compact } from './fog.js';
 import { AudioEngine, audioDuration } from './audio.js';
 import { newCampaign, newCharacter, newScene, newToken, tokenStats, playerView, THEMES, DISPOSITION_COLORS } from './model.js';
+import { renderMonsterPanel as monsterPanel } from './monster.js';
 import { ICONS, modal, confirmBox, promptBox, popover, closePopover, hpConditionsEditor, conditionChips, renderHandout, avatar } from './ui.js';
 import { roll as rollDice, withAdvantage, DiceOverlay, RollLog } from './dice.js';
 import { newCombat, combatant, sortCombat, current as currentCombatant, advance, combatView, renderStrip } from './combat.js';
 import { loadBestiary, searchBestiary, renderStatBlock } from './statblock.js';
 import { importPack, paneprep, actorModal, encounterTokens, clockWidget, orderPackScenes } from './prep.js';
-import { Engine, actorFor, sheetNumbers } from './rules.js';
+import { Engine, actorFor, sheetNumbers, stripHtml } from './rules.js';
+import { LIGHTS, moveBlocked, visionOn } from './vision.js';
+import { tokenSight, tokenLight } from './model.js';
+import { wrapUpDialog } from './wrapup.js';
 import { SheetWindow, AREA_SHAPE, needsTarget } from './sheet.js';
 import { imageKitDialog, importZip, listenForKit, artFor } from './imagekit.js';
 
@@ -24,6 +28,7 @@ const S = {
   selection: [], tab: 'scene', activeFog: new FogMask(), panelDirty: false,
   dice: null, log: null, prepSection: null, prepFollow: true,
   engine: null, targets: {}, pending: new Map(), sheetWin: null, engScene: null,
+  asks: new Map(), turnBusy: false, monPin: null, lightPreset: 'torch',
 };
 window.__dm = S; // handy for debugging from the console
 queueMicrotask(() => { S.change = (fn, o) => change(fn, o); });
@@ -113,7 +118,25 @@ function migrate(c) {
   if (c.combat === undefined) c.combat = null;
   for (const ch of c.characters) { ch.init ??= 0; ch.effects ||= []; ch.state ||= {}; }
   if (!c.sceneOrderV1) { for (const p of Object.values(c.packs)) orderPackScenes(c, p); c.sceneOrderV1 = true; }
-  for (const s of c.scenes) { s.templates ||= []; s.fog ||= { on: true, ops: [] }; s.kind ||= 'map'; for (const t of s.tokens) t.init ??= 0; }
+  for (const s of c.scenes) { s.templates ||= []; s.fog ||= { on: true, ops: [] }; s.kind ||= 'map'; s.walls ||= []; s.lights ||= []; s.vision ||= { on: false, light: 'bright' }; for (const t of s.tokens) t.init ??= 0; }
+  for (const ch of c.characters) ch.items ||= [];
+  c.journal ||= [];
+  if (!c.sessionStart) startSession(c);
+}
+
+// A session runs from one wrap-up to the next: the journal and the clocks' starting values.
+function startSession(c) {
+  c.sessionStart = Date.now();
+  c.sessionClocks = Object.fromEntries((c.clocks || []).map(k => [k.id, k.value]));
+  c.sessionHp = Object.fromEntries(c.characters.map(ch => [ch.id, { ...ch.hp }]));
+}
+
+function journal(type, text, data = {}) {
+  if (!S.camp) return;
+  const j = (S.camp.journal ||= []);
+  j.push({ ts: Date.now(), type, text, ...data });
+  if (j.length > 3000) j.splice(0, j.length - 3000);
+  save();
 }
 
 const save = debounce(async () => {
@@ -189,9 +212,39 @@ function onPlayerMessage(pid, m, info) {
     case 'move': {
       const t = !c.paused && ownsToken(m.id);
       if (!t) { S.host.send(pid, { t: 'state', view: viewFor(info.charId) }); return; }
-      t.x = Math.round(m.x); t.y = Math.round(m.y);
+      const from = { x: t.x, y: t.y }, to = { x: Math.round(m.x), y: Math.round(m.y) };
+      if (moveBlocked(sc, t, from, to)) { S.view.setRemoteDrag(m.id, null); S.host.send(pid, { t: 'notice', text: 'A wall is in the way.' }); S.host.send(pid, { t: 'state', view: viewFor(info.charId) }); return; }
+      t.x = to.x; t.y = to.y;
       S.view.setRemoteDrag(m.id, null);
       change(() => {}, { panel: S.tab === 'tokens' });
+      afterMove(sc, t, from);
+      return;
+    }
+    case 'door': {
+      const w = sc?.walls?.find(x => x.id === m.id && x.door && !x.secret);
+      if (!w) return;
+      if (w.locked) { S.host.send(pid, { t: 'notice', text: 'It’s locked.' }); return; }
+      change(() => { w.open = !w.open; }, { panel: false });
+      return;
+    }
+    case 'answer': {
+      const a = S.asks.get(String(m.id || ''));
+      if (a && a.charId === info.charId && (m.choice == null || a.options.some(o => o.id === m.choice))) a.done(m.choice ?? null);
+      return;
+    }
+    case 'light': {
+      const ch = c.characters.find(x => x.id === info.charId); if (!ch) return;
+      const L = LIGHTS[m.kind];
+      change(() => { ch.light = L ? { kind: m.kind, bright: L.bright, dim: L.dim } : null; }, { panel: S.tab === 'party' });
+      return;
+    }
+    case 'give-item': case 'drop-item': {
+      const ch = c.characters.find(x => x.id === info.charId); if (!ch) return;
+      const it = (ch.items || []).find(x => x.id === m.id); if (!it) return;
+      if (m.t === 'drop-item') { change(() => { ch.items = ch.items.filter(x => x !== it); }); journal('loot', `${ch.name} dropped ${it.name}`); return; }
+      const to = c.characters.find(x => x.id === m.to); if (!to || to === ch) return;
+      change(() => passItem(ch, to, it));
+      journal('loot', `${ch.name} gave ${it.name} to ${to.name}`);
       return;
     }
     case 'ruler': {
@@ -337,6 +390,7 @@ function buildApp() {
       el('div', { class: 'who', id: 'who' }),
       el('span', { class: 'status', id: 'net-status' }),
       el('button', { class: 'btn small', id: 'pause-btn', type: 'button', onclick: () => change(c => { c.paused = !c.paused; }) }, 'Pause'),
+      el('button', { class: 'btn small', type: 'button', title: 'Recap the session, the clocks and the loot, ready for your prep project', onclick: () => openWrapUp() }, 'Wrap up'),
       el('button', { class: 'btn small', type: 'button', onclick: exportBackup }, 'Back up'),
       el('button', { class: 'btn icon ghost', type: 'button', title: 'Panel', html: ICONS.menu, onclick: () => $('#app').classList.toggle('show-panel') })),
     el('nav', { class: 'rail', id: 'rail', 'aria-label': 'Scenes' }),
@@ -347,6 +401,7 @@ function buildApp() {
       el('div', { class: 'players-see', id: 'players-see' }),
       el('div', { class: 'banner', id: 'banner', hidden: true }),
       el('div', { class: 'combat-strip', id: 'combat-strip', hidden: true }),
+      el('div', { class: 'mon-panel', id: 'mon-panel', hidden: true }),
       el('div', { class: 'dock', id: 'dock' }),
       el('div', { class: 'empty-stage', id: 'empty-stage', hidden: true })),
     el('aside', { class: 'panel', id: 'panel' },
@@ -362,9 +417,15 @@ function buildApp() {
     canMoveToken: () => true,
     onTokenDrag: (id, x, y, final) => {
       const sc = scene(); const t = sc?.tokens.find(t => t.id === id); if (!t) return;
-      if (final) { change(() => { t.x = x; t.y = y; }, { panel: S.tab === 'tokens' }); }
-      else if (viewingActive()) dragOut(id, x, y);
+      if (final) { const from = S.dragFrom?.id === id ? S.dragFrom : { x: t.x, y: t.y }; S.dragFrom = null; change(() => { t.x = x; t.y = y; }, { panel: S.tab === 'tokens' }); if (from.x !== x || from.y !== y) afterMove(sc, t, from); }
+      else { if (S.dragFrom?.id !== id) S.dragFrom = { id, x: t.x, y: t.y }; if (viewingActive()) dragOut(id, x, y); }
     },
+    onWallAdd: w => change(() => { const sc = scene(); (sc.walls ||= []).push({ id: uid(8), ...w, ...(w.door ? { open: false } : {}) }); }, { panel: false }),
+    onWallRemove: id => change(() => { const sc = scene(); sc.walls = (sc.walls || []).filter(w => w.id !== id); }, { panel: false }),
+    onLightAdd: (x, y) => change(() => { const sc = scene(); const L = LIGHTS[S.lightPreset] || LIGHTS.torch; (sc.lights ||= []).push({ id: uid(8), x, y, bright: L.bright, dim: L.dim, kind: S.lightPreset }); }, { panel: false }),
+    onLightRemove: id => change(() => { const sc = scene(); sc.lights = (sc.lights || []).filter(l => l.id !== id); }, { panel: false }),
+    onDoor: id => { const w = scene()?.walls?.find(x => x.id === id); if (w) change(() => { w.open = !w.open; }, { panel: false }); },
+    onDoorContext: (id, x, y) => doorHud(id, x, y),
     onRuler: pts => { if (viewingActive()) S.host.broadcast({ t: 'ruler', key: 'dm', pts, color: '#E5916A', name: 'DM' }); },
     onPing: (x, y, pull) => { if (viewingActive()) S.host.broadcast({ t: 'ping', x, y, color: '#E5916A', pull }); if (pull) toast(viewingActive() ? 'Pulled everyone’s view here' : 'Players aren’t on this scene'); },
     onTemplateAdd: tpl => change(() => scene().templates.push({ ...tpl, id: uid(8), owner: 'dm', color: '#E5916A' }), { panel: false }),
@@ -418,15 +479,16 @@ function renderStatus() {
     cc.innerHTML = '';
     for (const k of (S.camp.clocks || []).filter(k => !S.camp.activePack || k.pack === S.camp.activePack)) {
       const b = el('button', { class: 'clock-chip' + (k.visible ? '' : ' hidden'), type: 'button', title: `${k.name}${k.visible ? '' : ' (hidden from players)'}. Click +1, right-click −1.${k.steps?.[k.value] ? '\nAt ' + k.value + ': ' + k.steps[k.value] : ''}`,
-        onclick: () => change(() => { k.value = Math.min(k.size, k.value + 1); }) },
+        onclick: () => { const was = k.value; change(() => { k.value = Math.min(k.size, k.value + 1); }); if (k.value !== was) clockEvent(k, was); } },
         el('span', { class: 'nm' }, k.name), el('span', { class: 'pp' }, Array.from({ length: k.size }, (_, i) => el('i', { class: i < k.value ? 'on' : '' }))));
-      b.addEventListener('contextmenu', e => { e.preventDefault(); change(() => { k.value = Math.max(0, k.value - 1); }); });
+      b.addEventListener('contextmenu', e => { e.preventDefault(); const was = k.value; change(() => { k.value = Math.max(0, k.value - 1); }); if (k.value !== was) clockEvent(k, was); });
       cc.append(b);
     }
   }
   $('#pause-btn').setAttribute('aria-pressed', S.camp.paused ? 'true' : 'false');
   $('#pause-btn').textContent = S.camp.paused ? 'Paused' : 'Pause';
 }
+function clockEvent(k, was) { journal('clock', `${k.name}: ${was} → ${k.value}${k.steps?.[k.value] ? ' (' + k.steps[k.value] + ')' : ''}`, { clock: k.id, name: k.name, from: was, to: k.value }); }
 const initials = n => String(n || '?').split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
 
 // ======================================================================= toolbar
@@ -435,9 +497,10 @@ const TOOLS = [
   [['select', 'Select & move (drag empty space to pan, hold to ping)'], ['ruler', 'Measure'], ['ping', 'Ping (Shift: pull everyone’s view)']],
   [['tpl:circle', 'Sphere / radius'], ['tpl:cone', 'Cone'], ['tpl:line', 'Line'], ['tpl:cube', 'Cube']],
   [['fog:reveal-rect', 'Reveal area'], ['fog:hide-rect', 'Hide area'], ['fog:reveal-brush', 'Reveal brush'], ['fog:hide-brush', 'Hide brush']],
+  [['wall', 'Walls (drag to draw, right-click removes)'], ['door', 'Doors (drag to draw; click a door to open it)'], ['light', 'Lights (click to place, right-click removes)']],
 ];
-const TOOL_ICON = { select: 'select', ruler: 'ruler', ping: 'ping', 'tpl:circle': 'circle', 'tpl:cone': 'cone', 'tpl:line': 'line', 'tpl:cube': 'cube', 'fog:reveal-rect': 'reveal', 'fog:hide-rect': 'hide', 'fog:reveal-brush': 'brush', 'fog:hide-brush': 'brush' };
-const KEYS = { v: 'select', r: 'ruler', p: 'ping', c: 'tpl:circle', o: 'tpl:cone', l: 'tpl:line', b: 'tpl:cube', f: 'fog:reveal-rect', h: 'fog:hide-rect' };
+const TOOL_ICON = { select: 'select', ruler: 'ruler', ping: 'ping', 'tpl:circle': 'circle', 'tpl:cone': 'cone', 'tpl:line': 'line', 'tpl:cube': 'cube', 'fog:reveal-rect': 'reveal', 'fog:hide-rect': 'hide', 'fog:reveal-brush': 'brush', 'fog:hide-brush': 'brush', wall: 'wall', door: 'door', light: 'light' };
+const KEYS = { v: 'select', r: 'ruler', p: 'ping', c: 'tpl:circle', o: 'tpl:cone', l: 'tpl:line', b: 'tpl:cube', f: 'fog:reveal-rect', h: 'fog:hide-rect', w: 'wall', d: 'door', i: 'light' };
 
 function buildToolbar() {
   const tb = $('#toolbar'); tb.innerHTML = '';
@@ -474,7 +537,50 @@ function setTool(id) {
       el('button', { class: 'btn small', type: 'button', onclick: () => change(() => { const s = scene(); s.fog.ops = []; }) }, 'Hide all'),
       el('button', { class: 'btn small', type: 'button', html: ICONS.undo + ' Undo', onclick: () => change(() => { scene().fog.ops.pop(); }) }),
       sc && !sc.fog.on ? el('span', { class: 'small', style: { color: 'var(--copper)' } }, 'Fog is off for this scene (Scene tab).') : null);
+  } else if (id === 'wall' || id === 'door' || id === 'light') {
+    sb.hidden = false; sb.innerHTML = '';
+    wallBar(sb, id);
   } else sb.hidden = true;
+  S.view.dirty = true;
+}
+
+function wallBar(sb, id) {
+  const sc = scene();
+  if (!sc) { sb.append(el('span', { class: 'small muted' }, 'Make or open a scene first.')); return; }
+  const v = sc.vision || (sc.vision = { on: false, light: 'bright' });
+  const on = el('input', { type: 'checkbox', checked: v.on });
+  on.addEventListener('change', () => change(() => { sc.vision.on = on.checked; }));
+  const amb = el('select', { 'aria-label': 'Light on this scene', style: { width: 'auto', padding: '2px 6px' } }, [['bright', 'Bright (daylight)'], ['dim', 'Dim (dusk, moonlight)'], ['dark', 'Dark (needs light or darkvision)']].map(([k, l]) => el('option', { value: k, selected: v.light === k }, l)));
+  amb.addEventListener('change', () => change(() => { sc.vision.light = amb.value; }));
+  const show = el('input', { type: 'checkbox', checked: S.view.showWalls });
+  show.addEventListener('change', () => { S.view.showWalls = show.checked; S.view.dirty = true; });
+  const prev = el('input', { type: 'checkbox', checked: S.view.previewVision });
+  prev.addEventListener('change', () => { S.view.previewVision = prev.checked; S.view.dirty = true; });
+  sb.append(el('span', { class: 'lbl' }, id === 'light' ? 'Lights' : id === 'door' ? 'Doors' : 'Walls'),
+    el('label', { class: 'check small', title: 'Players see only what their tokens can see: walls block sight, darkness needs light or darkvision' }, on, 'Vision'),
+    amb,
+    el('label', { class: 'check small' }, prev, 'Preview party vision'),
+    el('label', { class: 'check small', title: 'Keep walls and lights drawn after you switch tools' }, show, 'Always show walls'));
+  if (id === 'light') {
+    const pre = el('select', { 'aria-label': 'New light', style: { width: 'auto', padding: '2px 6px' } }, Object.entries(LIGHTS).map(([k, L]) => el('option', { value: k, selected: S.lightPreset === k }, `${L.name} (${L.bright}/${L.dim} ft)`)));
+    pre.addEventListener('change', () => { S.lightPreset = pre.value; });
+    sb.append(pre, el('button', { class: 'btn small', type: 'button', onclick: () => change(() => { scene().lights = []; }) }, 'Remove all lights'));
+  } else {
+    sb.append(
+      el('button', { class: 'btn small', type: 'button', html: ICONS.undo + ' Undo', onclick: () => change(() => { scene().walls.pop(); }) }),
+      el('button', { class: 'btn small', type: 'button', onclick: async () => { if (await confirmBox('Remove every wall?', 'All walls and doors on this scene will be removed.', { ok: 'Remove all', danger: true })) change(() => { scene().walls = []; }); } }, 'Clear'),
+      el('span', { class: 'small muted' }, 'Drag to draw · ends snap to corners and to other walls (Shift: free) · right-click removes'));
+  }
+}
+
+function doorHud(id, x, y) {
+  const sc = scene(); const w = sc?.walls?.find(x => x.id === id); if (!w) return;
+  const set = patch => { change(() => Object.assign(w, patch), { panel: false }); closePopover(); };
+  popover(x + 8, y + 8, el('div', { class: 'stack' }, el('h4', {}, 'Door'),
+    el('button', { class: 'btn small', type: 'button', onclick: () => set({ open: !w.open }) }, w.open ? 'Close it' : 'Open it'),
+    el('button', { class: 'btn small', type: 'button', onclick: () => set({ locked: !w.locked, open: w.locked ? w.open : false }) }, w.locked ? 'Unlock (players can open it)' : 'Lock (players can’t open it)'),
+    el('button', { class: 'btn small', type: 'button', onclick: () => set({ secret: !w.secret }) }, w.secret ? 'Not secret' : 'Make it secret (looks like wall)'),
+    el('button', { class: 'btn small danger', type: 'button', onclick: () => { change(() => { sc.walls = sc.walls.filter(x => x !== w); }, { panel: false }); closePopover(); } }, 'Remove door')));
 }
 
 // ======================================================================= rail
@@ -539,6 +645,25 @@ function renderCombatStrip() {
   renderStrip($('#combat-strip'), v, { resolveImg: id => assets.url(id), onClick: x => focusToken(x.tokenId) });
   S.view.activeToken = currentCombatant(c)?.tokenId || null;
   S.view.dirty = true;
+  renderMonsterPanel();
+}
+
+function renderMonsterPanel() {
+  const box = $('#mon-panel'); if (!box || !S.camp) return;
+  monsterPanel(box, {
+    camp: S.camp, engine: S.engine, pinned: S.monPin, busy: S.turnBusy,
+    scene: () => (S.camp.combat && S.camp.scenes.find(x => x.id === S.camp.combat.sceneId)) || scene(),
+    targets: () => S.targets.dm || [],
+    current: () => currentCombatant(S.camp.combat),
+    use: (sc, t, entry, i, spellId) => npcUse(sc, t, entry, i, spellId),
+    run: async (sc, t, req) => { S.engScene = sc; await S.engine.use(t, req); },
+    roll: (f, label) => dmRoll(f, { label }),
+    change: fn => change(fn, { panel: false }),
+    nextTurn: () => nextTurn(),
+    unpin: () => { S.monPin = null; renderMonsterPanel(); },
+    focus: id => focusToken(id),
+    resolveImg: id => assets.url(id),
+  });
 }
 
 function focusToken(tokenId) {
@@ -552,7 +677,7 @@ function focusToken(tokenId) {
 function dmSceneView(sc) {
   return {
     ...sc,
-    tokens: sc.tokens.map(t => { const st = tokenStats(S.camp, t); return { ...t, name: st.name, hp: st.hp, ac: st.ac, conditions: st.icons, color: st.color, img: st.img, size: st.size || t.size }; }),
+    tokens: sc.tokens.map(t => { const st = tokenStats(S.camp, t); return { ...t, name: st.name, hp: st.hp, ac: st.ac, conditions: st.icons, color: st.color, img: st.img, size: st.size || t.size, light: tokenLight(S.camp, t), sight: t.charId && visionOn(sc) ? tokenSight(S.camp, t) : null }; }),
   };
 }
 
@@ -567,6 +692,7 @@ function activate(id) {
     }
   }, { rail: true });
   toast(`Players now see “${sc.name}”`, 'ok');
+  journal('scene', sc.name, { scene: sc.name, section: sc.packRef?.section || null, pack: sc.packRef?.pack || null });
 }
 
 // ======================================================================= scenes
@@ -678,7 +804,9 @@ function panePrep() {
     viewScene, activate, setBackground,
     playTrack: t => playTrack(t),
     attachTrack,
-    showHandout: h => { change(c => { c.handout = h; }); toast('Showing to players'); },
+    showHandout: h => { change(c => { c.handout = h; }); toast('Showing to players'); if (h.title) journal('handout', h.title); },
+    giveItem: (it, charId, n) => giveItem(it, charId, n),
+    clockEvent: (k, was) => clockEvent(k, was),
     loadPack,
     placeEncounter: (pack, enc, gi) => placeEncounter(pack, enc, gi),
     imageKit: () => imageKitDialog(kitCtx()),
@@ -688,7 +816,7 @@ function panePrep() {
 
 function loadPack(pk) {
   let res;
-  try { change(c => { res = importPack(c, pk); }, { rail: true }); }
+  try { change(c => { res = importPack(c, pk); c.sessionClocks ||= {}; for (const k of c.clocks) if (!(k.id in c.sessionClocks)) c.sessionClocks[k.id] = k.value; }, { rail: true }); }
   catch (e) { toast(e.message, 'bad'); return; }
   S.tab = 'prep'; S.prepSection = null; renderTabs(); renderPanel(true);
   toast(res.fresh ? `Loaded “${pk.title}”: ${res.added} scenes ready for images` : `Updated “${pk.title}”${res.added ? `, ${res.added} new scenes` : ''}`, 'ok');
@@ -856,13 +984,15 @@ function tokenEditor(sc, t) {
         el('label', { class: 'field' }, el('span', {}, 'AC'), num(t.ac, v => change(() => { t.ac = v; }))),
         el('label', { class: 'field' }, el('span', {}, 'Size (squares)'), num(t.size, v => v >= 1 && change(() => { t.size = Math.min(8, Math.round(v)); }), { min: 1, max: 8 })),
         el('label', { class: 'field' }, el('span', {}, 'Attitude'), disp)),
-      el('div', { class: 'grid3' }, el('label', { class: 'field' }, el('span', {}, 'Initiative bonus'), num(t.init || 0, v => change(() => { t.init = v || 0; })))),
+      el('div', { class: 'grid3' }, el('label', { class: 'field' }, el('span', {}, 'Initiative bonus'), num(t.init || 0, v => change(() => { t.init = v || 0; }))),
+        el('label', { class: 'field', style: { gridColumn: 'span 2' } }, el('span', {}, 'Carries a light'), lightSelect(t.light, l => change(() => { t.light = l; })))),
       el('div', { class: 'row' },
         el('label', { class: 'check' }, (() => { const c = el('input', { type: 'checkbox', checked: t.hidden }); c.addEventListener('change', () => change(() => { t.hidden = c.checked; })); return c; })(), 'Hidden from players'),
         el('button', { class: 'btn small', type: 'button', onclick: async () => { const [f] = await pickFiles({ accept: 'image/*' }); if (f) { const id = await assets.put(f, f.name); change(() => { t.img = id; }); } } }, 'Token image…')));
   } else box.append(el('p', { class: 'small muted' }, 'Party token: HP, AC and conditions come from the character (Party tab), and the player can change HP and conditions too.'));
   box.append(hpConditionsEditor(data, patch => change(() => Object.assign(target, patch), { panel: false }), { showMax: !ch }));
   const actor = t.actorId && S.camp.actors[t.actorId];
+  if (actor && !ch) box.append(el('button', { class: 'btn small', type: 'button', title: 'Keep this creature’s actions on the map, outside its turn too', onclick: () => { S.monPin = t.id; renderMonsterPanel(); } }, 'Show its actions panel'));
   if (actor) box.append(el('details', { open: true }, el('summary', { class: 'small' }, 'Stat block'), renderStatBlock(actor, { onRoll: (f, label) => dmRoll(f, { label: label.replace(actor.name, st.name) }), onUse: (entry, i, spellId) => npcUse(sc, t, entry, i, spellId), spells: S.engine?.spells })));
   if (ch?.sheet) box.append(el('button', { class: 'btn small', type: 'button', onclick: () => openSheet(ch.id) }, 'Open character sheet'));
   box.append(el('div', { class: 'row' },
@@ -870,6 +1000,12 @@ function tokenEditor(sc, t) {
     el('button', { class: 'btn small', type: 'button', onclick: () => { const c = S.view.tokenCenter(t); S.view.centerOn(c.x, c.y); } }, 'Find on map'),
     el('button', { class: 'btn small danger', type: 'button', onclick: () => change(() => { sc.tokens = sc.tokens.filter(x => x.id !== t.id); S.selection = []; }) }, 'Remove')));
   return box;
+}
+
+function lightSelect(cur, onPick) {
+  const sel = el('select', { 'aria-label': 'Light' }, el('option', { value: '' }, 'No light'), Object.entries(LIGHTS).map(([k, L]) => el('option', { value: k, selected: cur?.kind === k }, `${L.name} (${L.bright} ft bright, +${L.dim} dim)`)));
+  sel.addEventListener('change', () => { const L = LIGHTS[sel.value]; onPick(L ? { kind: sel.value, bright: L.bright, dim: L.dim } : null); });
+  return sel;
 }
 
 function nextName(sc, base) {
@@ -930,7 +1066,17 @@ function startCombat(which) {
   const sc = scene(); if (!sc) return;
   const tokens = which === 'selected' ? sc.tokens.filter(t => S.selection.includes(t.id)) : sc.tokens;
   if (!tokens.length) { toast(which === 'selected' ? 'Select tokens on the map first (Shift-click for several)' : 'No tokens on this scene', 'bad'); return; }
-  change(c => { c.combat = newCombat(tokens.map(t => tokenCombatant(sc, t))); c.combat.sceneId = sc.id; });
+  change(c => { c.combat = newCombat(tokens.map(t => tokenCombatant(sc, t))); c.combat.sceneId = sc.id; c.combat.startedAt = Date.now(); });
+  const foes = tokens.filter(t => !t.charId && t.disposition !== 'friendly').map(t => t.name.replace(/\s+\d+$/, ''));
+  journal('combat-start', `A fight began on ${sc.name}`, { scene: sc.name, foes: countNames(foes), pack: S.camp.activePack || null });
+}
+function countNames(list) { const m = new Map(); for (const n of list) m.set(n, (m.get(n) || 0) + 1); return [...m].map(([n, k]) => (k > 1 ? `${n} ×${k}` : n)); }
+function endCombat() {
+  const c = S.camp.combat; if (!c) return;
+  const sc = S.camp.scenes.find(x => x.id === c.sceneId);
+  const down = c.list.filter(x => !x.charId).filter(x => { const t = sc?.tokens.find(t => t.id === x.tokenId); return x.defeated || (t && t.hp?.value <= 0); }).map(x => x.name.replace(/\s+\d+$/, ''));
+  journal('combat-end', `The fight ended after ${c.started ? c.round : 0} round${c.round === 1 ? '' : 's'}`, { rounds: c.started ? c.round : 0, defeated: countNames(down), scene: sc?.name || '' });
+  change(cc => { cc.combat = null; });
 }
 
 function rollNpcInit(all = false) {
@@ -965,7 +1111,7 @@ function paneCombat() {
   const missing = c.list.filter(x => x.init == null);
   wrap.append(
     el('div', { class: 'row' }, el('h3', { class: 'grow', style: { margin: 0 } }, c.started ? `Round ${c.round}` : 'Initiative'),
-      el('button', { class: 'btn small danger', type: 'button', onclick: async () => { if (await confirmBox('End combat?', 'The turn order will be cleared.', { ok: 'End combat' })) change(cc => { cc.combat = null; }); } }, 'End')),
+      el('button', { class: 'btn small danger', type: 'button', onclick: async () => { if (await confirmBox('End combat?', 'The turn order will be cleared.', { ok: 'End combat' })) endCombat(); } }, 'End')),
     el('div', { class: 'row' },
       el('button', { class: 'btn small', type: 'button', onclick: () => rollNpcInit(false) }, 'Roll monsters'),
       el('button', { class: 'btn small' + (c.askInit ? ' copper' : ''), type: 'button', onclick: () => change(() => { c.askInit = !c.askInit; }) }, c.askInit ? 'Waiting on players…' : 'Ask players to roll'),
@@ -993,26 +1139,48 @@ function paneCombat() {
   wrap.append(list);
   wrap.append(el('div', { class: 'row', style: { marginTop: '6px' } },
     c.started ? el('button', { class: 'btn', type: 'button', onclick: () => change(() => advance(c, -1)) }, '◂ Back') : null,
-    el('button', { class: 'btn primary grow', type: 'button', onclick: () => nextTurn() }, c.started ? 'Next turn ▸' : 'Begin round 1 ▸')));
+    el('button', { class: 'btn primary grow', type: 'button', disabled: S.turnBusy, onclick: () => nextTurn() }, S.turnBusy ? 'Resolving…' : c.started ? 'Next turn ▸' : 'Begin round 1 ▸')));
   wrap.append(el('p', { class: 'small muted' }, 'Players see the order across the top of their map and get a nudge when their turn comes up. Shortcut: N for next turn.'));
   return wrap;
 }
 
-function nextTurn() {
-  const c = S.camp.combat; if (!c) return;
+const keyOf = x => (x.charId ? 'c:' + x.charId : 't:' + x.tokenId);
+
+// End the current turn (end-of-turn saves and zones), move on, then start the next one
+// (durations, recharges, start-of-turn effects). Turns run one at a time.
+async function nextTurn() {
+  const c = S.camp.combat; if (!c || S.turnBusy) return;
   if (!c.started && c.list.some(x => x.init == null)) { toast('Some combatants have no initiative yet', 'bad'); }
-  change(() => { sortCombat(c); advance(c, 1); });
-  const cur = currentCombatant(c);
-  if (cur && S.engine) {
+  S.turnBusy = true; renderMonsterPanel();
+  try {
     S.engScene = S.camp.scenes.find(x => x.id === c.sceneId) || activeScene() || scene();
-    const lines = S.engine.onTurnStart(cur.charId ? 'c:' + cur.charId : 't:' + cur.tokenId);
-    if (lines.length) postCard({ id: uid(10), ts: Date.now(), by: { name: 'DM', color: DM_COLOR }, title: `Round ${c.round}: ${cur.name}`, lines: lines.map(t => ({ t, c: 'muted' })), undo: [] });
-    change(() => {}, { panel: S.tab === 'combat' });
-  }
-  if (cur && !cur.hidden) {
-    S.host.broadcast({ t: 'turn', id: cur.id, charId: cur.charId, name: cur.name, round: c.round });
-    if (cur.tokenId && viewingActive()) { const t = scene()?.tokens.find(t => t.id === cur.tokenId); if (t) { const p = S.view.tokenCenter(t); S.view.addPing(p.x, p.y, '#E5916A'); } }
-  }
+    const prev = currentCombatant(c);
+    if (prev && S.engine) {
+      const cd = await S.engine.onTurnEnd(keyOf(prev));
+      if (cd.lines.length) postCard(cd);
+    }
+    if (S.camp.combat !== c) return;
+    change(() => { sortCombat(c); advance(c, 1); });
+    const cur = currentCombatant(c);
+    if (cur && !cur.hidden) {
+      S.host.broadcast({ t: 'turn', id: cur.id, charId: cur.charId, name: cur.name, round: c.round });
+      if (cur.tokenId && viewingActive()) { const t = scene()?.tokens.find(t => t.id === cur.tokenId); if (t) { const p = S.view.tokenCenter(t); S.view.addPing(p.x, p.y, '#E5916A'); } }
+    }
+    if (cur && S.engine) {
+      const cd = await S.engine.onTurnStart(keyOf(cur), { round: c.round });
+      if (cd.lines.length) postCard(cd);
+      change(() => {}, { panel: S.tab === 'combat' });
+    }
+  } finally { S.turnBusy = false; renderMonsterPanel(); }
+}
+
+// After a token lands on a new square: Booming Blade, zones it walked into, emanations.
+async function afterMove(sc, t, from) {
+  if (!S.engine) return;
+  S.engScene = sc;
+  const cd = await S.engine.onMoved(t, from);
+  if (cd) postCard(cd);
+  change(() => {}, { panel: false });
 }
 
 // ---------------------------------------------------------------- Party tab
@@ -1055,6 +1223,7 @@ function paneParty() {
           el('label', { class: 'field' }, el('span', {}, 'Size'), num(ch.size || 1, v => v >= 1 && change(() => { ch.size = Math.min(4, Math.round(v)); }), { min: 1, max: 4 }))),
         el('div', { class: 'grid3' }, el('label', { class: 'field' }, el('span', {}, 'Initiative bonus'), num(ch.init || 0, v => change(() => { ch.init = v || 0; for (const x of S.camp.combat?.list || []) if (x.charId === ch.id) x.bonus = v || 0; })))),
         el('div', { class: 'row' }, color, el('button', { class: 'btn small', type: 'button', onclick: async () => { const [f] = await pickFiles({ accept: 'image/*' }); if (f) { const id = await assets.put(f, f.name); change(() => { ch.img = id; }); } } }, 'Token image…')),
+        el('label', { class: 'field' }, el('span', {}, 'Carries a light (the player can change this too)'), lightSelect(ch.light, l => change(() => { ch.light = l; }))),
         hpConditionsEditor(data, patch => change(() => Object.assign(ch, patch), { panel: false })),
         el('div', { class: 'row' },
           el('button', { class: 'btn small', type: 'button', onclick: async () => { if (await confirmBox('New link?', `${ch.name}'s old link will stop working. Send ${ch.player || 'the player'} the new one.`, { ok: 'Make new link' })) { S.host.kick(ch.id); change(() => { ch.key = uid(8); }); } } }, 'New link'),
@@ -1064,10 +1233,67 @@ function paneParty() {
       el('div', { class: 'hpline' }, el('span', { class: 'lbl' }, 'HP'), `${ch.hp.value}/${ch.hp.max}${ch.hp.temp ? ' +' + ch.hp.temp : ''}`, el('span', { class: 'lbl', style: { marginLeft: '8px' } }, 'AC'), String(ch.ac)),
       ch.conditions.length ? conditionChips(ch.conditions) : null,
       sheetControls(ch),
+      partyItems(ch),
       el('div', { class: 'linkbox' }, link, el('button', { class: 'btn icon', type: 'button', title: 'Copy link', html: ICONS.copy, onclick: async () => { if (await copyText(link.value)) toast(`Copied ${ch.name}'s link`, 'ok'); } })),
       det));
   }
   return wrap;
+}
+
+function partyItems(ch) {
+  const items = ch.items || [];
+  const box = el('details', { class: 'items-box' }, el('summary', { class: 'small' }, items.length ? `Carrying ${items.length} item${items.length === 1 ? '' : 's'} from play` : 'No items from play yet'));
+  const list = el('div', { class: 'stack', style: { marginTop: '6px' } });
+  for (const it of items) list.append(el('div', { class: 'track' },
+    el('span', {}),
+    el('div', { style: { minWidth: 0 } }, el('div', { class: 'nm' }, it.name), el('div', { class: 'kind' }, (it.type || '') + (it.charges ? ` · ${it.charges.left}/${it.charges.max} charges` : ` · ×${it.qty ?? 1}`))),
+    el('div', { class: 'row', style: { gap: '4px' } },
+      el('button', { class: 'btn icon ghost', type: 'button', title: 'One fewer', onclick: () => change(() => { if (it.charges) it.charges.left = Math.max(0, it.charges.left - 1); else { it.qty = (it.qty ?? 1) - 1; if (it.qty <= 0) ch.items = ch.items.filter(x => x !== it); } }) }, '−'),
+      el('button', { class: 'btn icon ghost', type: 'button', title: 'One more', onclick: () => change(() => { if (it.charges) it.charges.left = Math.min(it.charges.max, it.charges.left + 1); else it.qty = (it.qty ?? 1) + 1; }) }, '+'),
+      el('button', { class: 'btn icon ghost', type: 'button', title: 'Take it away', html: ICONS.x, onclick: () => change(() => { ch.items = ch.items.filter(x => x !== it); }) }))));
+  list.append(el('button', { class: 'btn small', type: 'button', onclick: () => giveItemDialog(ch) }, '+ Give an item…'));
+  box.append(list);
+  return box;
+}
+
+// All the loot the loaded packs know about.
+function packItems() { return Object.values(S.camp.packs || {}).flatMap(p => (p.items || []).map(it => ({ ...it, pack: p.id, packTitle: p.title }))); }
+
+function giveItemDialog(ch) {
+  const all = packItems();
+  const sel = el('select', {}, el('option', { value: '' }, all.length ? 'From your session packs…' : 'No pack items loaded'), all.map((it, i) => el('option', { value: i }, `${it.name} · ${it.packTitle}`)));
+  const name = el('input', { type: 'text', placeholder: 'Or name a new item' });
+  const text = el('textarea', { rows: 3, placeholder: 'What it does (optional)' });
+  const qty = el('input', { type: 'number', min: 1, value: 1 });
+  modal({ title: `Give ${ch.name} an item`, body: el('div', { class: 'stack' }, sel, name, text, el('label', { class: 'field' }, el('span', {}, 'How many'), qty)),
+    actions: [{ label: 'Cancel' }, { label: 'Give', kind: 'primary', run: () => {
+      const n = Math.max(1, Number(qty.value) || 1);
+      const it = sel.value !== '' ? all[Number(sel.value)] : name.value.trim() ? { key: 'custom:' + uid(6), name: name.value.trim(), type: 'Loot', text: text.value.trim(), qty: 1 } : null;
+      if (!it) { toast('Pick an item or name one', 'bad'); return false; }
+      giveItem(it, ch.id, n);
+    } }] });
+}
+
+function addItem(ch, it, n = 1) {
+  ch.items ||= [];
+  const ex = it.key && ch.items.find(x => x.key === it.key && x.pack === it.pack);
+  if (ex && !ex.charges) { ex.qty = (ex.qty ?? 1) + n; return ex; }
+  const copy = { id: uid(8), key: it.key || null, pack: it.pack || null, name: it.name, type: it.type || '', text: it.text || '', qty: it.charges ? 1 : n, auto: it.auto ? clone(it.auto) : null };
+  if (it.charges) copy.charges = { max: it.charges, left: it.charges };
+  ch.items.push(copy);
+  return copy;
+}
+function giveItem(it, charId, n = 1) {
+  const ch = S.camp.characters.find(c => c.id === charId); if (!ch) return;
+  change(() => addItem(ch, it, n));
+  journal('loot', `${ch.name} got ${it.name}${n > 1 ? ' ×' + n : ''}`, { char: ch.name, item: it.name, qty: n });
+  toast(`${ch.name} now carries ${it.name}${n > 1 ? ' ×' + n : ''}`, 'ok');
+}
+// Hand one of an item (or the whole charged item) to someone else.
+function passItem(from, to, it) {
+  if (it.charges || (it.qty ?? 1) <= 1) { from.items = from.items.filter(x => x !== it); (to.items ||= []).push(it); return; }
+  it.qty -= 1;
+  addItem(to, { ...it, charges: null }, 1);
 }
 
 // ---------------------------------------------------------------- Audio tab
@@ -1146,7 +1372,7 @@ function paneHandouts() {
   wrap.append(el('h4', {}, 'New handout'), el('div', { class: 'stack' }, title, text,
     el('div', { class: 'row' }, style, el('button', { class: 'btn small', type: 'button', onclick: async () => { const [f] = await pickFiles({ accept: 'image/*' }); if (f) { img = await assets.put(f, f.name); il.textContent = f.name; } } }, 'Image…'), il),
     el('div', { class: 'row' },
-      el('button', { class: 'btn primary', type: 'button', onclick: () => { const h = mkHandout(); if (h) change(c => { c.handout = h; c.handouts.unshift(h); }); } }, 'Show to players'),
+      el('button', { class: 'btn primary', type: 'button', onclick: () => { const h = mkHandout(); if (h) { change(c => { c.handout = h; c.handouts.unshift(h); }); if (h.title) journal('handout', h.title); } } }, 'Show to players'),
       el('button', { class: 'btn', type: 'button', onclick: () => { const h = mkHandout(); if (h) { change(c => { c.handouts.unshift(h); }); toast('Saved for later'); } } }, 'Save for later'))));
   function mkHandout() {
     if (!text.value.trim() && !img) { toast('Write something or choose an image', 'bad'); return null; }
@@ -1155,7 +1381,7 @@ function paneHandouts() {
   if (S.camp.handouts.length) {
     wrap.append(el('h4', {}, 'Saved'));
     for (const h of S.camp.handouts) wrap.append(el('div', { class: 'track' },
-      el('button', { class: 'btn icon', type: 'button', title: 'Show to players', html: ICONS.play, onclick: () => change(c => { c.handout = { ...h, at: Date.now() }; }) }),
+      el('button', { class: 'btn icon', type: 'button', title: 'Show to players', html: ICONS.play, onclick: () => { change(c => { c.handout = { ...h, at: Date.now() }; }); if (h.title) journal('handout', h.title); } }),
       el('div', { class: 'nm' }, h.title || (h.text ? h.text.slice(0, 40) : 'Image')),
       el('div', { class: 'row', style: { gap: '4px' } },
         el('button', { class: 'btn icon ghost', type: 'button', title: 'Preview', html: ICONS.eye, onclick: () => previewHandout(h) }),
@@ -1186,8 +1412,11 @@ function paneSettings() {
     el('h4', {}, 'Rules'),
     el('label', { class: 'field' }, el('span', {}, 'Diagonal movement'), diag),
     el('label', { class: 'field' }, el('span', {}, 'Monster health players can see'), mh),
+    el('label', { class: 'check' }, (() => { const x = el('input', { type: 'checkbox', checked: st.reactPrompts !== false }); x.addEventListener('change', () => change(() => { st.reactPrompts = x.checked; })); return x; })(), 'Ask about reactions and rerolls (Shield, Counterspell, Bardic Inspiration, Legendary Resistance…)'),
+    el('label', { class: 'field' }, el('span', {}, 'Seconds to answer before the table moves on'), num(st.reactTimeout || 30, v => change(() => { st.reactTimeout = Math.max(5, Math.min(120, v || 30)); }), { min: 5, max: 120 })),
+    el('label', { class: 'check' }, (() => { const x = el('input', { type: 'checkbox', checked: !!st.creatureCover }); x.addEventListener('change', () => change(() => { st.creatureCover = x.checked; })); return x; })(), 'Creatures in the way give half cover (walls always count)'),
     el('h4', {}, 'Keyboard'),
-    el('p', { class: 'small muted' }, 'V select · R ruler · P ping · C sphere · O cone · L line · B cube · F reveal · H hide · Delete removes · arrows nudge · Esc clears. Hold on empty map to ping; Shift+ping pulls every player’s view.'),
+    el('p', { class: 'small muted' }, 'V select · R ruler · P ping · C sphere · O cone · L line · B cube · F reveal · H hide · W walls · D doors · I lights · T target · N next turn · Delete removes · arrows nudge · Esc clears. Hold on empty map to ping; Shift+ping pulls every player’s view.'),
     el('h4', {}, 'Backups'),
     el('div', { class: 'row' }, el('button', { class: 'btn', type: 'button', onclick: exportBackup }, 'Back up this campaign'), el('button', { class: 'btn', type: 'button', onclick: importBackup }, 'Restore a backup…')),
     el('h4', {}, 'Danger'),
@@ -1257,6 +1486,8 @@ function makeEngine() {
     waiting: (id, name, label) => { S.pending.set(id, { name, label }); renderPending(); },
     onlineChars: () => new Set([...(S.host?.clients.values() || [])].map(c => c.info.charId)),
     summon: (A, key) => summon(A, key),
+    ask: (charId, q) => askChoice(charId, q),
+    event: (type, text, data) => journal(type, text, data),
   });
   // resolving a pending save also clears the prompt
   const orig = S.engine.resolvePendingSave.bind(S.engine);
@@ -1307,9 +1538,36 @@ function sendToChar(charId, msg) {
 function renderPending() {
   const box = $('#pending'); if (!box) return;
   box.innerHTML = '';
-  box.hidden = !S.pending.size;
+  box.hidden = !S.pending.size && !S.asks.size;
   for (const [id, p] of S.pending) box.append(el('div', { class: 'pend' }, el('span', { class: 'grow' }, `Waiting on ${p.name}: ${p.label}`),
     el('button', { class: 'btn small', type: 'button', onclick: () => S.engine.resolvePendingSave(id) }, 'Roll for them')));
+  const online = new Set([...(S.host?.clients.values() || [])].map(c => c.info.charId));
+  for (const a of S.asks.values()) box.append(el('div', { class: 'pend ask' },
+    el('div', { class: 'grow' }, el('b', {}, a.charId ? `${a.name}${online.has(a.charId) ? ' (asked)' : ' (not connected: you decide)'}` : 'Your call'), el('div', { class: 'small' }, a.title), a.detail ? el('div', { class: 'small muted' }, a.detail) : null),
+    el('div', { class: 'row', style: { gap: '4px' } }, ...a.options.map(o => el('button', { class: 'btn small primary', type: 'button', onclick: () => a.done(o.id) }, o.label)),
+      el('button', { class: 'btn small', type: 'button', onclick: () => a.done(null) }, 'No'))));
+}
+
+// The rules engine needs a decision: a reaction, a reroll, Legendary Resistance.
+// Online players get the question on their screen; the DM sees it too and can answer.
+function askChoice(charId, q) {
+  return new Promise(res => {
+    const id = uid(8);
+    const secs = Math.max(5, Number(S.camp.settings.reactTimeout) || 30);
+    let timer = null;
+    const done = v => {
+      if (!S.asks.has(id)) return;
+      clearTimeout(timer); S.asks.delete(id); renderPending();
+      if (charId) sendToChar(charId, { t: 'ask-done', id });
+      res(v);
+    };
+    timer = setTimeout(() => done(null), secs * 1000);
+    const ch = charId && S.camp.characters.find(c => c.id === charId);
+    S.asks.set(id, { id, charId, name: ch?.name || 'DM', title: q.title, detail: q.detail || '', options: q.options || [], done });
+    if (charId) sendToChar(charId, { t: 'ask', id, title: q.title, detail: q.detail || '', options: q.options || [], secs });
+    $('#dock')?.classList.remove('closed');
+    renderPending();
+  });
 }
 
 // ---- targets
@@ -1395,7 +1653,7 @@ async function loadSheetDialog(ch) {
 function closeModals() { document.querySelectorAll('.modal-back').forEach(b => b.remove()); }
 
 function pcView(ch) {
-  return { ch: { ...ch, acShown: actorAc(ch) }, sheet: ch.sheet, state: ch.state, effects: ch.effects, concentration: ch.concentration };
+  return { ch: { ...ch, acShown: actorAc(ch) }, sheet: ch.sheet, state: ch.state, effects: ch.effects, concentration: ch.concentration, items: ch.items || [], reactUsed: !!(S.camp.combat && ch.reactUsed) };
 }
 function actorAc(ch) { let ac = ch.ac; for (const e of ch.effects || []) ac += Number(e.mods?.acBonus) || 0; return ac; }
 
@@ -1414,12 +1672,15 @@ function openSheet(charId) {
     endConc: () => runEndConc(charId),
     endEffect: id => runEndEffect(charId, id),
     setState: patch => change(() => mergeState(ch, patch)),
+    party: () => S.camp.characters.map(c => ({ id: c.id, name: c.name })),
+    giveItem: (itemId, to) => { const it = ch.items?.find(x => x.id === itemId), dest = S.camp.characters.find(c => c.id === to); if (it && dest) { change(() => passItem(ch, dest, it)); journal('loot', `${ch.name} gave ${it.name} to ${dest.name}`); } },
+    dropItem: itemId => change(() => { ch.items = (ch.items || []).filter(x => x.id !== itemId); }),
   });
 }
 
 // Area spells: place the template first, then resolve.
 function clientUse(entry, req, send, color) {
-  const area = entry.area || entry.auto?.[req.opts?.activity || 0]?.area;
+  const area = entry.area || (Array.isArray(entry.auto) ? entry.auto[req.opts?.activity || 0]?.area : entry.auto?.area);
   const shape = AREA_SHAPE(area);
   if (shape && area.size) {
     setTool('tpl:' + shape);
@@ -1437,8 +1698,9 @@ async function runUse(charId, req, targets) {
   const t = sc?.tokens.find(t => t.charId === charId);
   if (!t) { toast('Put that character’s token on the map first', 'bad'); return false; }
   S.engScene = sc;
-  if (req.template) sc.templates.push({ ...sanitizeTpl(req.template), id: uid(8), owner: charId, color: S.camp.characters.find(c => c.id === charId)?.color || DM_COLOR });
-  await S.engine.use(t, { ...req, targets: validTargets(targets, sc) });
+  let templateId = null;
+  if (req.template) { templateId = uid(8); sc.templates.push({ ...sanitizeTpl(req.template), id: templateId, owner: charId, color: S.camp.characters.find(c => c.id === charId)?.color || DM_COLOR }); }
+  await S.engine.use(t, { ...req, templateId, targets: validTargets(targets, sc) });
   return true;
 }
 
@@ -1448,8 +1710,9 @@ async function npcUse(sc, t, entry, i, spellId) {
   const req = sp ? { src: 'npc-spell', id: spellId, opts: { activity: 0 } } : { src: 'npc', id: entry.name, opts: { activity: i } };
   const run = async r => {
     S.engScene = sc;
-    if (r.template) change(() => sc.templates.push({ ...sanitizeTpl(r.template), id: uid(8), owner: 'dm', color: DM_COLOR }), { panel: false });
-    await S.engine.use(t, { ...req, targets: validTargets(S.targets.dm, sc), template: r.template });
+    let templateId = null;
+    if (r.template) { templateId = uid(8); change(() => sc.templates.push({ ...sanitizeTpl(r.template), id: templateId, owner: 'dm', color: DM_COLOR }), { panel: false }); }
+    await S.engine.use(t, { ...req, targets: validTargets(S.targets.dm, sc), template: r.template, templateId });
   };
   if (!(S.targets.dm || []).length && needsTarget(subject, sp ? 0 : i)) { toast('Target someone first: hover their token and press T', 'bad'); return; }
   clientUse(subject, req, run, DM_COLOR);
@@ -1470,6 +1733,7 @@ function runRest(charId, kind) {
   const ch = S.camp.characters.find(c => c.id === charId); if (!ch) return;
   let got;
   change(() => { got = S.engine.rest(ch, kind); });
+  journal('rest', `${ch.name} took a ${kind} rest`, { char: ch.name, kind });
   postCard({ id: uid(10), ts: Date.now(), by: { name: ch.name, color: ch.color, charId }, title: `${ch.name}: ${kind === 'long' ? 'Long' : 'Short'} rest`, lines: [{ t: got.length ? 'Recovered: ' + got.join(', ') : 'Nothing to recover' }, ...(kind === 'long' ? [{ t: 'HP restored to full', c: 'heal' }] : [{ t: 'Spend Hit Dice from the dice tray and add the HP in the party panel.', c: 'muted' }])], undo: [] });
 }
 function runEndConc(charId) {
@@ -1521,7 +1785,7 @@ function onRulesMessage(pid, m, info) {
     case 'use': {
       if (!ch.sheet || c.paused) return;
       const q = m.req || {};
-      const req = { src: q.src === 'spell' ? 'spell' : 'action', id: String(q.id || ''), slot: clampInt(q.slot, 0, 9), pact: !!q.pact, opts: typeof q.opts === 'object' && q.opts ? q.opts : {}, template: q.template ? sanitizeTpl(q.template) : null };
+      const req = { src: ['spell', 'item'].includes(q.src) ? q.src : 'action', id: String(q.id || ''), slot: clampInt(q.slot, 0, 9), pact: !!q.pact, opts: typeof q.opts === 'object' && q.opts ? q.opts : {}, template: q.template ? sanitizeTpl(q.template) : null };
       runUse(ch.id, req, Array.isArray(q.targets) ? q.targets.map(String) : S.targets[ch.id]).then(ok => { if (!ok) S.host.send(pid, { t: 'notice', text: 'Your token isn’t on the map yet, so the DM has to place it first.' }); });
       return;
     }
@@ -1537,6 +1801,17 @@ function onRulesMessage(pid, m, info) {
       return;
     }
   }
+}
+
+function openWrapUp() {
+  save.flush();
+  wrapUpDialog({
+    camp: S.camp,
+    onSave: entry => { change(c => { (c.wrapups ||= []).push(entry); }); toast('Saved with the campaign', 'ok'); },
+    onNewSession: () => { change(c => { c.journalArchive = [...(c.journalArchive || []), ...(c.journal || [])].slice(-6000); c.journal = []; startSession(c); }); toast('A fresh session starts now', 'ok'); },
+    download: (blob, name) => downloadBlob(blob, name),
+    copy: async t => { if (await copyText(t)) toast('Copied the write-up', 'ok'); },
+  });
 }
 
 function kitCtx() { return { camp: S.camp, change: (fn, o) => change(fn, o), setBackground, renderPanel }; }

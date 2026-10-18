@@ -213,8 +213,23 @@ function enhance(doc, pack, ctx) {
     for (const key of host.dataset.clocks.split(',')) {
       const k = c.clocks.find(x => x.pack === pack.id && x.key === key);
       if (!k) continue;
-      host.append(clockWidget(k, { editable: true, onSet: v => ctx.change(() => { k.value = v; }), onToggleVisible: () => ctx.change(() => { k.visible = !k.visible; }) }));
+      host.append(clockWidget(k, { editable: true, onSet: v => { const was = k.value; ctx.change(() => { k.value = v; }); if (v !== was) ctx.clockEvent?.(k, was); }, onToggleVisible: () => ctx.change(() => { k.visible = !k.visible; }) }));
     }
+  }
+  // Item cards: hand the loot to a character
+  for (const card of doc.querySelectorAll('.itm')) {
+    const name = card.querySelector('.in')?.textContent.trim();
+    const it = (pack.items || []).find(x => x.name === name);
+    if (!it) continue;
+    const holders = c.characters.filter(ch => (ch.items || []).some(x => x.pack === pack.id && x.key === it.key));
+    const who = el('select', { 'aria-label': 'Give to', style: { width: 'auto', fontSize: '12px', padding: '2px 4px' } }, c.characters.map(ch => el('option', { value: ch.id }, ch.name)));
+    const qty = el('input', { type: 'number', min: 1, value: 1, 'aria-label': 'How many', style: { width: '52px', fontSize: '12px', padding: '2px 4px' } });
+    const auto = it.auto || {};
+    const does = auto.heal ? `heals ${auto.heal}` : auto.reroll ? 'offers a reroll on a failed save' : auto.save ? `DC ${auto.save.dc} save` : auto.selfEffect ? auto.selfEffect.name : auto.castSpell ? 'casts a spell' : 'gear (no automation)';
+    card.after(el('div', { class: 'pack-bar' },
+      el('span', { class: 'small ' + (holders.length ? 'ok' : 'need') }, holders.length ? '✓ with ' + holders.map(h => h.name).join(', ') : does),
+      c.characters.length ? el('span', { class: 'row', style: { gap: '4px' } }, who, it.charges ? null : qty,
+        el('button', { class: 'btn small primary', type: 'button', onclick: () => { ctx.giveItem?.({ ...it, pack: pack.id }, who.value, Math.max(1, Number(qty.value) || 1)); ctx.renderPanel(true); } }, 'Give')) : el('span', { class: 'small muted' }, 'Add the party first')));
   }
   // "Leads to" panels and in-page links
   for (const b of doc.querySelectorAll('.exits .lead')) b.addEventListener('click', () => {

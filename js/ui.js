@@ -27,6 +27,9 @@ export const ICONS = {
   vol: S('<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/>'),
   undo: S('<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>'),
   menu: S('<path d="M4 6h16M4 12h16M4 18h16"/>'),
+  wall: S('<path d="M3 6h18v12H3z"/><path d="M3 12h18M9 6v6M15 12v6"/>'),
+  door: S('<path d="M6 21V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17"/><path d="M4 21h16"/><circle cx="14.5" cy="12.5" r="1" fill="currentColor"/>'),
+  light: S('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
 };
 
 export function modal({ title, body, actions = [], onClose, wide }) {

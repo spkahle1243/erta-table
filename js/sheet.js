@@ -4,7 +4,8 @@
 
 import { el, escapeHtml } from './util.js';
 import { popover, closePopover } from './ui.js';
-import { sheetNumbers, ABIL, ABIL_NAME, SKILL_ABIL, stripHtml } from './rules.js';
+import { sheetNumbers, ABIL, ABIL_NAME, SKILL_ABIL, stripHtml, isPrepared } from './rules.js';
+export { isPrepared };
 
 const sgn = n => (n >= 0 ? '+' : '') + n;
 const TIME = { action: 'Actions', bonus: 'Bonus actions', reaction: 'Reactions', special: 'Other' };
@@ -15,6 +16,7 @@ export const AREA_SHAPE = a => SHAPES[String(a?.shape || '').toLowerCase()] || n
 
 // Whether using this needs a target picked with T (attacks, single-target saves and damage).
 export function needsTarget(entry, i = 0) {
+  if (entry.kind === 'item') return !!(entry.auto?.save && !entry.auto?.area);
   if (entry.poolHeal || entry.castSpell) return !!entry.castSpell;
   const act = entry.auto ? entry.auto[i] : entry.attack ? { type: 'attack' } : entry.save ? { type: 'save', area: entry.area } : null;
   if (!act) return !!entry.targetEffect && !/^self/i.test(entry.range || '');
@@ -23,11 +25,6 @@ export function needsTarget(entry, i = 0) {
   return act.type === 'attack' || act.type === 'save' || act.type === 'damage';
 }
 
-export function isPrepared(sheet, state, s) {
-  const o = state?.prep?.[s.id];
-  if (o != null) return o;
-  return !!(s.always || s.prepared || s.level === 0 || !sheet.spells.some(x => x.prepared));
-}
 
 // The whole sheet. view: { ch, sheet, state, effects, concentration }
 export function renderSheet(view, H, ui = {}) {
@@ -49,6 +46,7 @@ export function renderSheet(view, H, ui = {}) {
   const modeRow = el('div', { class: 'sh-mode' }, el('span', { class: 'muted small' }, 'Next d20:'),
     ...['adv', 'dis'].map(m => el('button', { class: 'btn small', type: 'button', 'aria-pressed': mode.v === m ? 'true' : 'false', onclick: () => { mode.v = mode.v === m ? null : m; H.refresh?.(); } }, m === 'adv' ? 'Advantage' : 'Disadvantage')),
     el('span', { class: 'grow' }),
+    view.reactUsed ? el('span', { class: 'chip react-used', title: 'You’ve used your reaction this round. It comes back at the start of your turn.' }, 'Reaction used') : null,
     el('span', { class: 'chip', title: 'Hover a token on the map and press T to target it' }, `🎯 ${H.targets?.().length || 0} targeted`));
   function takeMode() { const m = mode.v; if (m) { mode.v = null; H.refresh?.(); } return m; }
 
@@ -85,6 +83,11 @@ export function renderSheet(view, H, ui = {}) {
       if (!groups[k]?.length) continue;
       body.append(el('h4', { class: 'sh-h' }, TIME[k]));
       for (const a of groups[k]) body.append(actionRow(a));
+    }
+    const usable = (view.items || []).filter(itemUsable);
+    if (usable.length) {
+      body.append(el('h4', { class: 'sh-h' }, 'Items'));
+      for (const it of usable) body.append(itemRow(it));
     }
     body.append(el('h4', { class: 'sh-h' }, 'Rest'),
       el('div', { class: 'row' }, el('button', { class: 'btn small', type: 'button', onclick: () => H.rest('short') }, 'Short rest'), el('button', { class: 'btn small', type: 'button', onclick: () => H.rest('long') }, 'Long rest')));
@@ -129,12 +132,46 @@ export function renderSheet(view, H, ui = {}) {
         el('b', { class: 'mono' }, `${left}/${r.max}`),
         el('button', { class: 'btn small icon', type: 'button', 'aria-label': 'Get one back', onclick: () => H.setState({ used: { [r.id]: Math.max(0, used - 1) } }) }, '+')));
     }
+    const items = view.items || [];
+    body.append(el('h4', { class: 'sh-h' }, 'Picked up in play'));
+    if (!items.length) body.append(el('p', { class: 'sh-note' }, 'Loot your DM hands you shows up here.'));
+    for (const it of items) body.append(carriedRow(it));
     body.append(el('h4', { class: 'sh-h' }, 'Inventory'), el('ul', { class: 'sh-inv' }, (sheet.inventory || []).map(i => el('li', {}, i))));
     if (sheet.acNote) body.append(el('p', { class: 'sh-note' }, 'AC: ' + sheet.acNote));
   }
   return root;
 
   // ------------------------------------------------------------ rows
+
+  function itemInfo(it) {
+    const a = it.auto || {};
+    const bits = [];
+    if (a.heal) bits.push(`heal ${a.heal}`);
+    if (a.save) bits.push(`DC ${a.save.dc} ${(a.save.abil || []).map(x => x.toUpperCase()).join('/')}`);
+    if (a.damage?.length) bits.push(a.damage.map(p => dmgText(p, 0)).join(' + '));
+    if (a.area) bits.push(`${a.area.size} ft ${a.area.shape}`);
+    if (a.reroll) bits.push(`reroll a failed ${a.reroll.save.map(x => x.toUpperCase()).join('/')} save`);
+    bits.push(it.charges ? `${it.charges.left}/${it.charges.max} charges` : `×${it.qty ?? 1}`);
+    return bits.join(' · ');
+  }
+  function itemRow(it) {
+    return row(it.name, itemInfo(it), it.text, [
+      el('button', { class: 'btn small primary', type: 'button', disabled: it.charges ? it.charges.left <= 0 : (it.qty ?? 1) <= 0, onclick: () => H.use({ ...it, kind: 'item' }, { src: 'item', id: it.id, opts: modeOpts() }) }, 'Use')]);
+  }
+  function carriedRow(it) {
+    const btns = [];
+    if (itemUsable(it)) btns.push(el('button', { class: 'btn small primary', type: 'button', onclick: () => H.use({ ...it, kind: 'item' }, { src: 'item', id: it.id, opts: {} }) }, 'Use'));
+    else if (it.auto?.reroll) btns.push(el('span', { class: 'small muted' }, 'Offered when you fail that save'));
+    if (H.giveItem) btns.push(el('button', { class: 'btn small', type: 'button', 'aria-label': 'Give to someone', onclick: e => giveMenu(e, it) }, 'Give'));
+    return row(it.name, (it.type ? it.type + ' · ' : '') + itemInfo(it), it.text, btns);
+  }
+  function giveMenu(e, it) {
+    const others = (H.party?.() || []).filter(p => p.id !== ch.id);
+    const f = el('div', { class: 'stack sh-opts' }, el('h4', {}, `Give ${it.name}`),
+      ...others.map(p => el('button', { class: 'btn small', type: 'button', onclick: () => { closePopover(); H.giveItem(it.id, p.id); } }, p.name)),
+      H.dropItem ? el('button', { class: 'btn small danger', type: 'button', onclick: () => { closePopover(); H.dropItem(it.id); } }, 'Drop it') : null);
+    pop(e, f);
+  }
 
   function actionRow(a) {
     const info = [];
@@ -337,6 +374,7 @@ function dmgText(p, abilMod, nOverride) {
   if (typeof p.b === 'string' && /@mod/.test(p.b)) b += abilMod;
   return `${p.half ? 'half ' : ''}${nn && p.d ? nn + 'd' + p.d : ''}${b ? (nn ? (b > 0 ? '+' : '') : '') + b : ''} ${p.type || ''}`.trim();
 }
+function itemUsable(it) { const a = it.auto || {}; return !!(a.heal || a.selfEffect || a.save || a.castSpell || a.note); }
 function stat(k, v) { return el('div', { class: 'st' }, el('span', { class: 'k' }, k), el('b', {}, String(v ?? '—'))); }
 function btnStat(k, v, fn) { return el('button', { class: 'st', type: 'button', onclick: fn, title: 'Roll ' + k }, el('span', { class: 'k' }, k), el('b', {}, String(v))); }
 function pips(n, max, cls) { return el('span', { class: 'pp ' + cls }, Array.from({ length: max }, (_, i) => el('i', { class: i < n ? 'on' : '' }))); }

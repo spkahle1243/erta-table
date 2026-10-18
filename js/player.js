@@ -10,8 +10,9 @@ import { ICONS, popover, closePopover, hpConditionsEditor, conditionChips, rende
 import { roll as rollDice, withAdvantage, DiceOverlay, RollLog } from './dice.js';
 import { renderStrip } from './combat.js';
 import { SheetWindow, AREA_SHAPE, needsTarget } from './sheet.js';
+import { LIGHTS, moveBlocked } from './vision.js';
 
-const P = { client: null, view: null, map: null, audio: null, me: null, entered: false, dismissed: null, handoutEl: null, targets: [], saves: new Map(), sheet: null };
+const P = { client: null, view: null, map: null, audio: null, me: null, entered: false, dismissed: null, handoutEl: null, targets: [], saves: new Map(), asks: new Map(), sheet: null };
 window.__player = P;
 
 function parseLink() {
@@ -86,6 +87,8 @@ function onMessage(m) {
     }
     case 'save-req': P.saves.set(m.id, m); renderSaves(); return;
     case 'save-done': P.saves.delete(m.id); renderSaves(); return;
+    case 'ask': P.asks.set(m.id, { ...m, until: Date.now() + (m.secs || 30) * 1000 }); renderSaves(); chime(); return;
+    case 'ask-done': P.asks.delete(m.id); renderSaves(); return;
     case 'notice': toast(m.text); return;
     case 'turn': if (m.charId && m.charId === P.me?.charId) toast(`Your turn, ${P.me.name}!`, 'ok'); return;
   }
@@ -130,7 +133,17 @@ function buildApp() {
     getDiagonals: () => P.view?.settings?.diagonals || 'equal',
     canMoveToken: t => !!P.me && (t.charId === P.me.charId || (t.owner && t.owner === P.me.charId)) && !P.view?.paused,
     onToolChange: id => setTool(id),
-    onTokenDrag: (id, x, y, final) => { if (final) P.client.send({ t: 'move', id, x, y }); else dragOut(id, x, y); },
+    onTokenDrag: (id, x, y, final) => {
+      if (!final) { dragOut(id, x, y); return; }
+      const sc = P.map.scene, t = sc?.tokens.find(k => k.id === id);
+      if (sc && t?.from && moveBlocked(sc, t, t.from, { x, y })) {
+        toast('A wall is in the way');
+        t.x = t.from.x; t.y = t.from.y;
+        P.map.dirty = true; return;
+      }
+      P.client.send({ t: 'move', id, x, y });
+    },
+    onDoor: id => P.client.send({ t: 'door', id }),
     onRuler: pts => rulerOut(pts),
     onPing: (x, y) => P.client.send({ t: 'ping', x, y }),
     onTemplateAdd: tpl => P.client.send({ t: 'tpl-add', tpl }),
@@ -214,7 +227,7 @@ async function render() {
   // map
   const empty = $('#empty');
   if (v.scene) {
-    P.map.setScene({ ...v.scene, tokens: v.scene.tokens.map(t => ({ ...t, hidden: false })) });
+    P.map.setScene({ ...v.scene, tokens: v.scene.tokens.map(t => ({ ...t, hidden: false, from: { x: t.x, y: t.y } })) });
     empty.hidden = true;
   } else {
     P.map.setScene(null);
@@ -242,13 +255,13 @@ function openSheet() {
   P.sheet.open(() => {
     const y = P.view?.you, ch = myChar();
     if (!y?.sheet || !ch) return null;
-    return { ch: { ...ch, acShown: ch.ac }, sheet: y.sheet, state: y.state, effects: y.effects, concentration: y.concentration };
+    return { ch: { ...ch, acShown: ch.ac }, sheet: y.sheet, state: y.state, effects: y.effects, concentration: y.concentration, items: y.items || [], reactUsed: !!(y.reactUsed && P.view?.combat) };
   }, {
     key: P.me?.charId,
     targets: () => P.targets,
     use: (entry, req) => {
       if (P.view?.paused) { toast('The game is paused'); return; }
-      const area = entry.area || entry.auto?.[req.opts?.activity || 0]?.area;
+      const area = entry.area || (Array.isArray(entry.auto) ? entry.auto[req.opts?.activity || 0]?.area : entry.auto?.area);
       const shape = AREA_SHAPE(area);
       const send = r => P.client.send({ t: 'use', req: { ...r, targets: P.targets } });
       if (shape && area.size) {
@@ -268,15 +281,39 @@ function openSheet() {
     endConc: () => P.client.send({ t: 'end-conc' }),
     endEffect: id => P.client.send({ t: 'end-effect', id }),
     setState: patch => P.client.send({ t: 'sheet-state', patch }),
+    party: () => (P.view?.party || []).map(p => ({ id: p.id, name: p.name })),
+    giveItem: (id, to) => P.client.send({ t: 'give-item', id, to }),
+    dropItem: id => P.client.send({ t: 'drop-item', id }),
   });
 }
 
 function renderSaves() {
   const box = $('#save-ask'); if (!box) return;
   box.innerHTML = '';
-  box.hidden = !P.saves.size;
+  box.hidden = !P.saves.size && !P.asks.size;
   for (const [id, q] of P.saves) box.append(el('div', { class: 'row' }, el('span', { class: 'grow' }, q.label),
     el('button', { class: 'btn primary', type: 'button', onclick: () => { P.client.send({ t: 'save-roll', id }); P.saves.delete(id); renderSaves(); } }, `Roll ${q.formula.replace(/^1d20/, 'd20').replace(/^2d20kh/, 'd20 (adv) ').replace(/^2d20kl/, 'd20 (dis) ')}`)));
+  for (const [id, q] of P.asks) {
+    const answer = choice => { P.client.send({ t: 'answer', id, choice }); P.asks.delete(id); renderSaves(); };
+    const left = el('span', { class: 'small muted mono' });
+    const tick = () => { const s = Math.max(0, Math.ceil((q.until - Date.now()) / 1000)); left.textContent = s + 's'; if (s <= 0) { P.asks.delete(id); renderSaves(); } else if (P.asks.has(id)) setTimeout(tick, 500); };
+    tick();
+    box.append(el('div', { class: 'ask-q' },
+      el('div', { class: 'row' }, el('b', { class: 'grow' }, q.title), left),
+      q.detail ? el('div', { class: 'small' }, q.detail) : null,
+      el('div', { class: 'row', style: { flexWrap: 'wrap' } }, ...q.options.map(o => el('button', { class: 'btn primary small', type: 'button', onclick: () => answer(o.id) }, o.label)),
+        el('button', { class: 'btn small', type: 'button', onclick: () => answer(null) }, 'No'))));
+  }
+}
+
+// A soft two-note chime when the table asks you something.
+function chime() {
+  try {
+    const ac = P.chimeCtx ||= new AudioContext();
+    const g = ac.createGain(); g.connect(ac.destination);
+    g.gain.setValueAtTime(0.0001, ac.currentTime); g.gain.exponentialRampToValueAtTime(0.12 * (P.audio?.vol.master ?? 0.8), ac.currentTime + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.6);
+    for (const [f, t] of [[660, 0], [990, 0.12]]) { const o = ac.createOscillator(); o.type = 'sine'; o.frequency.value = f; o.connect(g); o.start(ac.currentTime + t); o.stop(ac.currentTime + t + 0.5); }
+  } catch {}
 }
 
 function renderCombat() {
@@ -312,8 +349,16 @@ function renderPc() {
     el('div', { class: 'hp-big' }, el('b', {}, ch.hp.value), el('span', { class: 'muted' }, '/ ' + ch.hp.max), ch.hp.temp ? el('span', { style: { color: '#7fb7d9' } }, `+${ch.hp.temp} temp`) : null,
       el('span', { class: 'bar', style: { marginLeft: '8px' } }, el('i', { style: { width: f * 100 + '%', background: f > .5 ? '#4f9d69' : f > .25 ? '#d6a73c' : '#c8553d' } }))),
     ...(ch.conditions.length ? [conditionChips(ch.conditions)] : []),
-    el('details', { open: wasOpen }, el('summary', {}, 'Change HP or conditions'),
-      el('div', { style: { marginTop: '8px' } }, hpConditionsEditor(data, patch => sendPc(patch), { showMax: false }))));
+    el('details', { open: wasOpen }, el('summary', {}, 'Change HP, conditions or light'),
+      el('div', { style: { marginTop: '8px' } }, hpConditionsEditor(data, patch => sendPc(patch), { showMax: false }),
+        el('label', { class: 'field', style: { marginTop: '8px' } }, el('span', { class: 'small muted' }, 'Carrying a light'), lightPick()))));
+}
+
+function lightPick() {
+  const cur = P.view?.you?.light?.kind || '';
+  const sel = el('select', { 'aria-label': 'Light' }, el('option', { value: '' }, 'No light'), Object.entries(LIGHTS).map(([k, L]) => el('option', { value: k, selected: cur === k }, `${L.name} (${L.bright} ft bright, +${L.dim} dim)`)));
+  sel.addEventListener('change', () => P.client.send({ t: 'light', kind: sel.value || null }));
+  return sel;
 }
 
 function sendPc(patch) {

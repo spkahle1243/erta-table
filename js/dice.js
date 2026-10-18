@@ -32,6 +32,9 @@ export function parseFormula(formula) {
 }
 
 export function randInt(sides) {
+  // tests can queue exact results: window.__forceDice = [17, 4, ...]
+  const q = globalThis.__forceDice;
+  if (q?.length) { const v = Math.round(Number(q.shift())); if (v >= 1 && v <= sides) return v; }
   const max = Math.floor(0x100000000 / sides) * sides;
   const buf = new Uint32Array(1);
   let x;

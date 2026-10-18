@@ -74,7 +74,81 @@ def text_with_breaks(node):
     t = re.sub(r' *\n *', '\n', t)
     return t.strip()
 
-def main(page_path, cfg_path, srd_path, out_path):
+ABIL = {'strength': 'str', 'dexterity': 'dex', 'constitution': 'con', 'intelligence': 'int', 'wisdom': 'wis', 'charisma': 'cha',
+        'str': 'str', 'dex': 'dex', 'con': 'con', 'int': 'int', 'wis': 'wis', 'cha': 'cha'}
+SHAPE = {'radius': 'sphere', 'sphere': 'sphere', 'cone': 'cone', 'line': 'line', 'cube': 'cube'}
+
+
+def item_auto(name, typ, text, spells):
+    """What the table can automate from an item card's description."""
+    a = {}
+    potion = 'potion' in typ.lower()
+    m = re.search(r'Regain\s+(\d+d\d+(?:\s*[+-]\s*\d+)?)\s*HP', text, re.I)
+    if m: a['heal'] = re.sub(r'\s+', '', m.group(1))
+    m = re.search(r'fail an? ([A-Za-z, ]+?) sav(?:e|ing throw)[^.]*?reroll', text, re.I)
+    if m:
+        save = [ABIL[w.lower()] for w in re.findall(r'[A-Za-z]+', m.group(1)) if w.lower() in ABIL]
+        if save: a['reroll'] = {'save': save}
+    m = re.search(r'Darkvision (\d+) ft for (\d+) hours?', text, re.I)
+    if m:
+        bonus = re.search(r'\+(\d+) ft if you have it', text, re.I)
+        a['selfEffect'] = {'key': slug(name), 'name': name, 'icon': 'marked', 'rounds': int(m.group(2)) * 600,
+                           'mods': {'darkvision': int(m.group(1)), 'darkvisionBonus': int(bonus.group(1)) if bonus else 0}}
+    m = re.search(r'(\d+)d(\d+)\s+([a-z]+)(?:\s*\+\s*([a-z]+))?(\s*\(half each\))?\s+in a (\d+)-ft\.? (radius|sphere|cone|line|cube)[^.]*?DC (\d+) ([A-Za-z]+)', text, re.I)
+    if m:
+        n, d, t1, t2, half_each, size, shape, dc, ab = m.groups()
+        n, d = int(n), int(d)
+        if t2 and half_each: dmg = [{'n': n // 2, 'd': d, 'type': t1.lower()}, {'n': n - n // 2, 'd': d, 'type': t2.lower()}]
+        else: dmg = [{'n': n, 'd': d, 'type': t1.lower()}] + ([{'n': n, 'd': d, 'type': t2.lower()}] if t2 else [])
+        a.update({'save': {'abil': [ABIL.get(ab.lower(), 'dex')], 'dc': int(dc)}, 'onSave': 'half', 'damage': dmg, 'area': {'shape': SHAPE[shape.lower()], 'size': int(size)}})
+    m = re.search(r'extra (\d+d\d+) ([a-z]+)(?: damage)? on (?:the|its) next hit', text, re.I)
+    if m: a['selfEffect'] = {'key': slug(name), 'name': name, 'icon': 'poisoned', 'rounds': 600, 'mods': {'weaponDamage': {'f': m.group(1), 'type': m.group(2).lower()}, 'oneHit': True}}
+    m = re.search(r'\(as ([a-z][a-z \'’-]+?)\)|cast ([a-z][a-z \'’-]+?)[.,;]', text, re.I)
+    if m:
+        sid = slug((m.group(1) or m.group(2)).replace('’', '').replace("'", ''))
+        if sid in spells: a['castSpell'] = sid
+    if not a and 'consumable' in typ.lower():
+        h = re.search(r'(\d+) hours?', text)
+        a['selfEffect'] = {'key': slug(name), 'name': name, 'icon': 'blessed', 'rounds': int(h.group(1)) * 600 if h else 10}
+    side = re.search(r'Side effect:\s*([^<]+?)(?:$|(?<=\.)\s)', text, re.I)
+    if side and a: a['note'] = 'Side effect: ' + side.group(1).strip()
+    if a and re.search(r'^\s*Bonus action', text, re.I) or (a and potion): a['time'] = 'bonus'
+    return a or None
+
+
+def parse_items(soup, spells, overrides=None):
+    items, seen = [], set()
+    for card in soup.select('.itm'):
+        nm = card.select_one('.in'); ty = card.select_one('.it'); de = card.select_one('.id')
+        if not nm: continue
+        name = nm.get_text(' ', strip=True)
+        if name in seen: continue
+        seen.add(name)
+        typ = ty.get_text(' ', strip=True) if ty else ''
+        text = de.get_text(' ', strip=True) if de else ''
+        it = {'key': 'i-' + slug(name), 'name': name, 'type': typ, 'text': str(de) if de else ''}
+        q = re.search(r'×\s*(\d+)', typ); c = re.search(r'\((\d+) charges?\)', typ)
+        it['qty'] = int(q.group(1)) if q else 1
+        if c: it['charges'] = int(c.group(1))
+        auto = item_auto(name, typ, text, spells)
+        if auto: it['auto'] = auto
+        it.update((overrides or {}).get(name, {}))
+        items.append(it)
+    return items
+
+
+def add_items_to_pack(pack_path, spells_path, cfg_path=None):
+    """Re-read the item cards of an existing pack (its sections hold the prep page)."""
+    pack = json.load(open(pack_path, encoding='utf-8'))
+    spells = json.load(open(spells_path, encoding='utf-8'))
+    cfg = json.load(open(cfg_path, encoding='utf-8')) if cfg_path else {}
+    soup = BeautifulSoup('\n'.join(s['html'] for s in pack['sections']), 'lxml')
+    pack['items'] = parse_items(soup, spells, cfg.get('items'))
+    json.dump(pack, open(pack_path, 'w', encoding='utf-8'), ensure_ascii=False, separators=(',', ':'))
+    for it in pack['items']: print(' ', it['name'], '·', it['type'], '·', json.dumps(it.get('auto')))
+
+
+def main(page_path, cfg_path, srd_path, out_path, spells_path='data/srd-spells-2024.json'):
     html = open(page_path, encoding='utf-8').read()
     cfg = json.load(open(cfg_path, encoding='utf-8'))
     srd = json.load(open(srd_path, encoding='utf-8'))
@@ -202,9 +276,13 @@ def main(page_path, cfg_path, srd_path, out_path):
         'scenes': scenes, 'music': music, 'handouts': handouts, 'portraits': portraits,
         'actors': actors, 'encounters': cfg.get('encounters', []), 'clocks': cfg.get('clocks', []),
         'styleLocks': cfg.get('styleLocks', {}),
+        'items': parse_items(soup, json.load(open(spells_path, encoding='utf-8')), cfg.get('items')),
     }
     json.dump(pack, open(out_path, 'w', encoding='utf-8'), ensure_ascii=False, separators=(',', ':'))
     print(f"{title}: {len(out_sections)} sections, {len(scenes)} scenes, {len(music)} tracks, {len(handouts)} handouts, {len(portraits)} portraits, {len(actors)} actors, {len(pack['encounters'])} encounters -> {out_path}")
 
 if __name__ == '__main__':
-    main(*sys.argv[1:5])
+    if sys.argv[1] == '--items':
+        add_items_to_pack(*sys.argv[2:5])
+    else:
+        main(*sys.argv[1:6])
