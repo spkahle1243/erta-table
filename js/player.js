@@ -11,6 +11,7 @@ import { roll as rollDice, withAdvantage, DiceOverlay, RollLog, DICE_SKINS } fro
 import { renderStrip } from './combat.js';
 import { SheetWindow, AREA_SHAPE, needsTarget } from './sheet.js';
 import { LIGHTS, moveBlocked } from './vision.js';
+import { watchForUpdates } from './update.js';
 
 const P = { client: null, view: null, map: null, audio: null, me: null, entered: false, dismissed: null, handoutEl: null, targets: [], saves: new Map(), asks: new Map(), sheet: null };
 window.__player = P;
@@ -441,3 +442,4 @@ function volumePop(e) {
 }
 
 boot();
+watchForUpdates();

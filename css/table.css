@@ -552,3 +552,6 @@ body.watch .dock .roll-list { max-height: 34vh; }
 body.watch.no-log .dock, body.watch.no-party .party-strip { display: none !important; }
 body.watch .party-strip { top: 12px; }
 body.watch .combat-strip { top: 12px; }
+
+/* ---------- a newer version is ready */
+.update-bar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 60; display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-radius: 10px; background: #1d2628; border: 1px solid var(--jade-line); box-shadow: 0 10px 30px rgba(0,0,0,.5); font-size: 14px; }

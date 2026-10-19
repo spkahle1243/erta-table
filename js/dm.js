@@ -21,6 +21,7 @@ import { wrapUpDialog } from './wrapup.js';
 import { renderNpcDrawer, drawerSection, presentNpcs } from './drawer.js';
 import { SYNTHS, synthName } from './sfx.js';
 import * as backup from './backup.js';
+import { watchForUpdates, refreshAndReload, VERSION } from './update.js';
 import { detectGrid, gridFromBox, guessCount } from './gridfit.js';
 import { detectWalls, sampleImage, floorMask, eraseBox, cutForDoor } from './wallfit.js';
 import { partyRow, rowCells, floorRow } from './placement.js';
@@ -1847,7 +1848,9 @@ function paneSettings() {
       if (!(await confirmBox('Delete campaign?', `“${S.camp.name}” will be deleted from this browser. Back it up first if you might want it again.`, { ok: 'Delete campaign', danger: true }))) return;
       const id = S.camp.id; S.host?.destroy(); S.camp = null; await campaigns.delete(id); renderHome();
     } }, 'Delete campaign'),
-    el('p', { class: 'small muted', style: { marginTop: '18px' } }, 'Condition icons by Lorc, Delapouite and contributors at game-icons.net (CC BY 3.0).'));
+    el('p', { class: 'small muted', style: { marginTop: '18px' } }, 'Condition icons by Lorc, Delapouite and contributors at game-icons.net (CC BY 3.0).'),
+    el('div', { class: 'row small muted' }, el('span', { class: 'grow' }, 'Version ' + VERSION),
+      el('button', { class: 'btn small ghost', type: 'button', title: 'Fetch every file fresh and reload', onclick: async () => { save.flush(); const r = await fetch('version.json', { cache: 'no-store' }).then(r => r.json()).catch(() => null); refreshAndReload(r?.files || []); } }, 'Reload fresh')));
 }
 
 // ======================================================================= backup
@@ -2318,3 +2321,5 @@ function openWrapUp() {
 }
 
 function kitCtx() { return { camp: S.camp, change: (fn, o) => change(fn, o), setBackground, renderPanel }; }
+
+watchForUpdates();

@@ -5,6 +5,7 @@
 
 import { $, el, toast, debounce, clamp } from './util.js';
 import { Client, setRelay, decodeRelay } from './net.js';
+import { watchForUpdates } from './update.js';
 
 const C = { client: null, v: null, tab: localStorage.getItem('erta-companion-tab') || 'tracker', prep: new Map(), section: null, notesFocus: false };
 window.__companion = C;
@@ -168,3 +169,4 @@ function rolls() {
 }
 
 boot();
+watchForUpdates();
