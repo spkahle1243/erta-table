@@ -174,12 +174,12 @@ input[type=color] { width: 34px; height: 30px; padding: 2px; border: 1px solid v
 
 /* ---------- handouts */
 .handout-wrap { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; background: rgba(5,8,9,.72); padding: 24px; }
-.handout-card { position: relative; max-width: min(640px, 100%); max-height: calc(100vh - 48px); overflow: auto; }
-.handout-card .close { position: absolute; right: -6px; top: -6px; z-index: 2; }
-.handout-paper { background: var(--paper); color: var(--paper-ink); border: 1px solid var(--paper-line); box-shadow: 0 1px 0 var(--paper-line), 0 18px 40px -12px rgba(0,0,0,.6); padding: 26px 30px; transform: rotate(-.5deg); font-family: var(--display); font-size: 21px; line-height: 1.45; white-space: pre-wrap; }
+.handout-card { position: relative; max-width: min(680px, 100%); overflow: visible; }
+.handout-card .close { position: absolute; right: -10px; top: -10px; z-index: 2; }
+.handout-paper { background: var(--paper); color: var(--paper-ink); border: 1px solid var(--paper-line); box-shadow: 0 1px 0 var(--paper-line), 0 18px 40px -12px rgba(0,0,0,.6); padding: 26px 30px; transform: rotate(-.5deg); font-family: var(--display); font-size: 21px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: break-word; max-height: calc(100vh - 64px); overflow-x: hidden; overflow-y: auto; }
 .handout-paper.ledger { font-family: var(--mono); font-size: 14.5px; transform: rotate(.4deg); }
 .handout-paper .hl { font-family: var(--mono); font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--paper-label); margin-bottom: 10px; white-space: normal; }
-.handout-img { max-width: 100%; max-height: calc(100vh - 80px); display: block; border-radius: 6px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+.handout-img { max-width: 100%; max-height: calc(100vh - 110px); display: block; border-radius: 6px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
 .handout-cap { text-align: center; font-family: var(--display); font-size: 22px; margin-top: 10px; color: var(--ink); }
 
 /* ---------- player */
@@ -501,7 +501,7 @@ span.clock-chip { cursor: default; }
 .sfx-board .pad:hover { border-color: var(--copper-line); }
 .sfx-board .pad:active { transform: scale(.97); background: var(--copper-tint, #31221B); }
 .sfx-board .pad kbd { position: absolute; top: 3px; left: 5px; font: 10px var(--mono, monospace); color: var(--muted); }
-.stage canvas[data-tool="grid"] { cursor: crosshair; }
+.stage canvas[data-tool="grid"], .stage canvas[data-tool="wallerase"], .stage canvas[data-tool="wallfind"] { cursor: crosshair; }
 
 /* ---------- crit flourish */
 .flourish { position: fixed; inset: 0; z-index: 40; pointer-events: none; display: grid; place-items: center; }

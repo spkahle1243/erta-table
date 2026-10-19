@@ -279,6 +279,8 @@ export class MapView {
       this.dirty = true; return;
     }
     if (tool === 'grid') { this.action = { kind: 'gridbox', x0: w.x, y0: w.y, x1: w.x, y1: w.y }; this.dirty = true; return; }
+    if (tool === 'wallerase') { this.action = { kind: 'erasebox', x0: w.x, y0: w.y, x1: w.x, y1: w.y }; this.dirty = true; return; }
+    if (tool === 'wallfind') { this.o.onWallSeed?.(w.x, w.y, e.shiftKey); this.action = { kind: 'none' }; return; }
     if (tool.startsWith('fog:')) {
       const [mode, shape] = tool.slice(4).split('-');
       this.action = shape === 'brush' ? { kind: 'fogbrush', m: mode, pts: [w.x, w.y] } : { kind: 'fogrect', m: mode, x0: w.x, y0: w.y, x1: w.x, y1: w.y };
@@ -344,7 +346,7 @@ export class MapView {
       this.dirty = true; return;
     }
     if (a.kind === 'wall') { const p = this.snapWall(w.x, w.y, e.shiftKey || a.free); a.x2 = p.x; a.y2 = p.y; this.dirty = true; return; }
-    if (a.kind === 'fogrect' || a.kind === 'gridbox') { a.x1 = w.x; a.y1 = w.y; this.dirty = true; return; }
+    if (a.kind === 'fogrect' || a.kind === 'gridbox' || a.kind === 'erasebox') { a.x1 = w.x; a.y1 = w.y; this.dirty = true; return; }
     if (a.kind === 'fogbrush') { a.pts.push(w.x, w.y); this.dirty = true; return; }
   }
 
@@ -378,6 +380,11 @@ export class MapView {
     }
     if (a.kind === 'wall') {
       if (Math.hypot(a.x2 - a.x1, a.y2 - a.y1) >= this.g * 0.2) this.o.onWallAdd?.({ x1: Math.round(a.x1), y1: Math.round(a.y1), x2: Math.round(a.x2), y2: Math.round(a.y2), door: a.door });
+      this.dirty = true; return;
+    }
+    if (a.kind === 'erasebox') {
+      const x = Math.min(a.x0, a.x1), y = Math.min(a.y0, a.y1), w = Math.abs(a.x1 - a.x0), h = Math.abs(a.y1 - a.y0);
+      if (w > 3 && h > 3) this.o.onWallErase?.({ x, y, w, h });
       this.dirty = true; return;
     }
     if (a.kind === 'gridbox') {
@@ -564,6 +571,11 @@ export class MapView {
       const x = Math.min(a.x0, a.x1), y = Math.min(a.y0, a.y1);
       c.fillRect(x, y, Math.abs(a.x1 - a.x0), Math.abs(a.y1 - a.y0)); c.strokeRect(x, y, Math.abs(a.x1 - a.x0), Math.abs(a.y1 - a.y0)); c.restore();
     }
+    if (a?.kind === 'erasebox') {
+      c.save(); c.fillStyle = 'rgba(229,145,106,.16)'; c.strokeStyle = '#E5916A'; c.lineWidth = 2 / this.cam.z; c.setLineDash([6 / this.cam.z, 5 / this.cam.z]);
+      const x = Math.min(a.x0, a.x1), y = Math.min(a.y0, a.y1);
+      c.fillRect(x, y, Math.abs(a.x1 - a.x0), Math.abs(a.y1 - a.y0)); c.strokeRect(x, y, Math.abs(a.x1 - a.x0), Math.abs(a.y1 - a.y0)); c.restore();
+    }
     if (a?.kind === 'gridbox') {
       c.save(); c.fillStyle = 'rgba(147,181,216,.18)'; c.strokeStyle = '#93B5D8'; c.lineWidth = 2 / this.cam.z; c.setLineDash([8 / this.cam.z, 6 / this.cam.z]);
       const x = Math.min(a.x0, a.x1), y = Math.min(a.y0, a.y1);
@@ -652,7 +664,7 @@ export class MapView {
 
   _drawWalls(c, s) {
     const dm = this.role === 'dm';
-    const showAll = dm && (this.showWalls || this.tool === 'wall' || this.tool === 'door' || this.tool === 'light');
+    const showAll = dm && (this.showWalls || ['wall', 'door', 'light', 'wallerase', 'wallfind'].includes(this.tool));
     const z = this.cam.z, g = s.grid.size;
     if (showAll) {
       c.save(); c.lineCap = 'round';
@@ -662,6 +674,15 @@ export class MapView {
         c.lineWidth = 3.5 / z; if (w.door && w.open) c.setLineDash([8 / z, 6 / z]);
         c.beginPath(); c.moveTo(w.x1, w.y1); c.lineTo(w.x2, w.y2); c.stroke(); c.setLineDash([]);
         c.fillStyle = '#E2E8E4'; for (const [x, y] of [[w.x1, w.y1], [w.x2, w.y2]]) { c.beginPath(); c.arc(x, y, 3.2 / z, 0, Math.PI * 2); c.fill(); }
+      }
+      // proposed walls from Find walls, and the floor samples clicked
+      if (this.previewWalls) {
+        c.strokeStyle = 'rgba(0,0,0,.6)'; c.lineWidth = 7 / z;
+        for (const w of this.previewWalls) { c.beginPath(); c.moveTo(w.x1, w.y1); c.lineTo(w.x2, w.y2); c.stroke(); }
+        c.strokeStyle = '#4FE3F0'; c.lineWidth = 3.5 / z; c.setLineDash([9 / z, 5 / z]);
+        for (const w of this.previewWalls) { c.beginPath(); c.moveTo(w.x1, w.y1); c.lineTo(w.x2, w.y2); c.stroke(); }
+        c.setLineDash([]);
+        for (const p of this.previewSeeds || []) { c.fillStyle = p.not ? '#E5916A' : '#66C39D'; c.strokeStyle = '#0d1213'; c.lineWidth = 2 / z; c.beginPath(); c.arc(p.x, p.y, g * 0.18, 0, Math.PI * 2); c.fill(); c.stroke(); }
       }
       const a = this.action;
       if (a?.kind === 'wall') { c.strokeStyle = a.door ? '#d6a73c' : '#66C39D'; c.lineWidth = 3.5 / z; c.setLineDash([6 / z, 5 / z]); c.beginPath(); c.moveTo(a.x1, a.y1); c.lineTo(a.x2, a.y2); c.stroke(); c.setLineDash([]); }

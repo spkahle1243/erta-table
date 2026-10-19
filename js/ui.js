@@ -173,7 +173,16 @@ export function renderHandout(h, imgUrl, onClose) {
   }
   wrap.append(card);
   wrap.addEventListener('pointerdown', e => { if (e.target === wrap) onClose?.(); });
+  // A long handout shrinks its type to fit the screen before it ever scrolls.
+  requestAnimationFrame(() => fitHandout(card));
   return wrap;
+}
+
+export function fitHandout(card) {
+  const paper = card.querySelector('.handout-paper'); if (!paper || !paper.isConnected) return;
+  let fs = parseFloat(getComputedStyle(paper).fontSize) || 20;
+  const min = paper.classList.contains('ledger') ? 11 : 14;
+  for (let i = 0; i < 24 && paper.scrollHeight > paper.clientHeight + 1 && fs > min; i++) { fs -= 0.5; paper.style.fontSize = fs + 'px'; }
 }
 
 export function avatar(name, color, url) {

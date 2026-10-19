@@ -53,6 +53,10 @@ Characters with a converted sheet (Party tab → **Open sheet**) get full automa
 
 New sheets are built from the PDFs with `tools/build_sheets.py` (sources in `tools/chars/`).
 
+## The party on every scene
+
+Every scene starts with the party's tokens on it, in a row with an empty square between them. On scene art the row sits low in the picture, at the lower left, bottom middle or lower right, wherever it covers the least of the picture. On a battle map it stands on the lowest stretch of floor. Move them and they stay where you put them; tokens you haven't moved follow the picture if you replace it. Delete a character's token from a scene and it stays off that scene.
+
 ## Combat flow
 
 **Reactions ask for themselves.** When something triggers a reaction, the player gets a question on their screen (with a soft chime and a countdown). Answer it and the table re-checks the result. If that player isn't connected, the question appears in your Dice & rolls panel instead, and you decide. Settings → Rules turns this off or changes the countdown (30 seconds by default).
@@ -84,8 +88,9 @@ A reaction is once per round in combat: it comes back at the start of your turn,
 
 Draw walls on a battle map and each player sees only what their character can see.
 
+- **Find walls…** (in the W bar) drafts the walls from the map picture so you only tidy up. It finds the floors (rooms, corridors, caves) and runs walls around them, through the middle of the painted stonework. Click any floor it missed, Shift-click anything it took for floor, and slide **Hold back ↔ Reach** if it stops short or spills over. **Add these walls** puts them on the scene (running it again replaces only the found walls, never ones you drew) and turns vision on. Then clean up: right-click removes a wall, **Erase by box** cuts away everything inside a box you drag, and a door drawn along a wall opens that stretch of it. It works best on maps with clear floors and drawn walls; outdoor maps and very busy art need more cleanup.
 - **W** draws walls: drag from corner to corner. Ends snap to the grid and to other walls' ends (hold Shift to place freely). Right-click a wall to remove it.
-- **D** draws doors the same way. Anyone can click a door's handle to open or close it. Right-click a handle to lock it (players can't open it), make it secret (looks like a wall to players) or remove it.
+- **D** draws doors the same way; drawn along an existing wall, the door replaces that part of the wall. Anyone can click a door's handle to open or close it. Right-click a handle to lock it (players can't open it), make it secret (looks like a wall to players) or remove it.
 - **I** places lights (torch, lamp, lantern, Light, Daylight). Right-click a light to remove it.
 - In the bar that opens, tick **Vision** and set the scene's light to **Bright**, **Dim** or **Dark**. In the dark, characters see by light and by darkvision: Ash's Devil's Sight, Gregory's Monocle of Night, and Boon's and Orek's tremorsense while Stonecunning is up. Players pick the light they carry from their character card. **Preview party vision** shows you what the party sees.
 - Walls stop players' tokens from walking through them; you can still move anything anywhere.

@@ -22,6 +22,8 @@ import { renderNpcDrawer, drawerSection, presentNpcs } from './drawer.js';
 import { SYNTHS, synthName } from './sfx.js';
 import * as backup from './backup.js';
 import { detectGrid, gridFromBox, guessCount } from './gridfit.js';
+import { detectWalls, sampleImage, floorMask, eraseBox, cutForDoor } from './wallfit.js';
+import { partyRow, rowCells, floorRow } from './placement.js';
 import { SheetWindow, AREA_SHAPE, needsTarget } from './sheet.js';
 import { imageKitDialog, importZip, listenForKit, artFor } from './imagekit.js';
 
@@ -233,7 +235,7 @@ function onPlayerMessage(pid, m, info) {
       if (!t) { S.host.send(pid, { t: 'state', view: viewFor(info.charId) }); return; }
       const from = { x: t.x, y: t.y }, to = { x: Math.round(m.x), y: Math.round(m.y) };
       if (moveBlocked(sc, t, from, to)) { S.view.setRemoteDrag(m.id, null); S.host.send(pid, { t: 'notice', text: 'A wall is in the way.' }); S.host.send(pid, { t: 'state', view: viewFor(info.charId) }); return; }
-      t.x = to.x; t.y = to.y;
+      t.x = to.x; t.y = to.y; t.autoPlaced = false;
       S.view.setRemoteDrag(m.id, null);
       change(() => {}, { panel: S.tab === 'tokens' });
       afterMove(sc, t, from);
@@ -488,10 +490,12 @@ function buildApp() {
     canMoveToken: () => true,
     onTokenDrag: (id, x, y, final) => {
       const sc = scene(); const t = sc?.tokens.find(t => t.id === id); if (!t) return;
-      if (final) { const from = S.dragFrom?.id === id ? S.dragFrom : { x: t.x, y: t.y }; S.dragFrom = null; change(() => { t.x = x; t.y = y; }, { panel: S.tab === 'tokens' }); if (from.x !== x || from.y !== y) afterMove(sc, t, from); }
+      if (final) { const from = S.dragFrom?.id === id ? S.dragFrom : { x: t.x, y: t.y }; S.dragFrom = null; change(() => { t.x = x; t.y = y; if (from.x !== x || from.y !== y) t.autoPlaced = false; }, { panel: S.tab === 'tokens' }); if (from.x !== x || from.y !== y) afterMove(sc, t, from); }
       else { if (S.dragFrom?.id !== id) S.dragFrom = { id, x: t.x, y: t.y }; if (viewingActive()) dragOut(id, x, y); }
     },
-    onWallAdd: w => change(() => { const sc = scene(); (sc.walls ||= []).push({ id: uid(8), ...w, ...(w.door ? { open: false } : {}) }); }, { panel: false }),
+    onWallAdd: w => change(() => { const sc = scene(); sc.walls ||= []; if (w.door) sc.walls = cutForDoor(sc.walls, w, sc.grid.size * 0.3); sc.walls.push({ id: uid(8), ...w, ...(w.door ? { open: false } : {}) }); }, { panel: false }),
+    onWallErase: box => change(() => { const sc = scene(); sc.walls = eraseBox(sc.walls || [], box); }, { panel: false }),
+    onWallSeed: (x, y, not) => { const F = S.wallFind; if (!F) return; F.seeds.push({ x, y, not }); runWallFind(); },
     onWallRemove: id => change(() => { const sc = scene(); sc.walls = (sc.walls || []).filter(w => w.id !== id); }, { panel: false }),
     onLightAdd: (x, y) => change(() => { const sc = scene(); const L = LIGHTS[S.lightPreset] || LIGHTS.torch; (sc.lights ||= []).push({ id: uid(8), x, y, bright: L.bright, dim: L.dim, kind: S.lightPreset }); }, { panel: false }),
     onLightRemove: id => change(() => { const sc = scene(); sc.lights = (sc.lights || []).filter(l => l.id !== id); }, { panel: false }),
@@ -507,7 +511,7 @@ function buildApp() {
     onTokenContext: (id, x, y) => tokenHud(id, x, y),
     onTokenDblClick: id => { S.selection = [id]; S.tab = 'tokens'; renderTabs(); renderPanel(); },
     onToolChange: id => setTool(id),
-    onTokenDelete: ids => change(() => { const sc = scene(); sc.tokens = sc.tokens.filter(t => !ids.includes(t.id)); S.selection = []; }),
+    onTokenDelete: ids => change(() => { const sc = scene(); for (const t of sc.tokens) if (ids.includes(t.id) && t.charId) (sc.partyRemoved ||= []).push(t.charId); sc.tokens = sc.tokens.filter(t => !ids.includes(t.id)); S.selection = []; }),
     onDropFiles: dropFiles,
     onDropData: (charId, wx, wy) => placePc(charId, wx, wy),
   });
@@ -536,7 +540,7 @@ async function goHome() {
   renderHome();
 }
 
-function refreshAll() { renderTitle(); renderStatus(); renderRail(); refreshMap(); renderTabs(); renderPanel(true); renderDrawer(); }
+function refreshAll() { renderTitle(); renderStatus(); renderRail(); refreshMap(); renderTabs(); renderPanel(true); renderDrawer(); if (S.viewId) autoPlaceParty(scene()); }
 
 // ---------------------------------------------------------------- Who's here
 function toggleDrawer(show = !S.drawer.show) { S.drawer.show = show; S.drawer.pick = null; renderDrawer(); }
@@ -725,10 +729,14 @@ function setTool(id) {
       el('button', { class: 'btn small', type: 'button', onclick: () => change(() => { const s = scene(); s.fog.ops = []; }) }, 'Hide all'),
       el('button', { class: 'btn small', type: 'button', html: ICONS.undo + ' Undo', onclick: () => change(() => { scene().fog.ops.pop(); }) }),
       sc && !sc.fog.on ? el('span', { class: 'small', style: { color: 'var(--copper)' } }, 'Fog is off for this scene (Scene tab).') : null);
-  } else if (id === 'wall' || id === 'door' || id === 'light') {
+  } else if (id === 'wall' || id === 'door' || id === 'light' || id === 'wallerase') {
     sb.hidden = false; sb.innerHTML = '';
     wallBar(sb, id);
+  } else if (id === 'wallfind') {
+    sb.hidden = false; sb.innerHTML = '';
+    wallFindBar(sb);
   } else sb.hidden = true;
+  if (id !== 'wallfind' && S.wallFind) { S.wallFind = null; S.view.previewWalls = null; S.view.previewSeeds = null; }
   S.view.dirty = true;
 }
 
@@ -755,10 +763,58 @@ function wallBar(sb, id) {
     sb.append(pre, el('button', { class: 'btn small', type: 'button', onclick: () => change(() => { scene().lights = []; }) }, 'Remove all lights'));
   } else {
     sb.append(
+      el('button', { class: 'btn small copper', type: 'button', title: 'Draft the walls from the map picture, then clean them up', disabled: !sc.bg, onclick: () => setTool('wallfind') }, 'Find walls…'),
+      el('button', { class: 'btn small', type: 'button', 'aria-pressed': id === 'wallerase' ? 'true' : 'false', title: 'Drag a box: the walls inside it are cut away', onclick: () => setTool(id === 'wallerase' ? 'wall' : 'wallerase') }, 'Erase by box'),
       el('button', { class: 'btn small', type: 'button', html: ICONS.undo + ' Undo', onclick: () => change(() => { scene().walls.pop(); }) }),
       el('button', { class: 'btn small', type: 'button', onclick: async () => { if (await confirmBox('Remove every wall?', 'All walls and doors on this scene will be removed.', { ok: 'Remove all', danger: true })) change(() => { scene().walls = []; }); } }, 'Clear'),
-      el('span', { class: 'small muted' }, 'Drag to draw · ends snap to corners and to other walls (Shift: free) · right-click removes'));
+      el('span', { class: 'small muted' }, id === 'wallerase' ? 'Drag a box over walls to cut them away' : id === 'door' ? 'Drag along a wall to put a door in it' : 'Drag to draw · ends snap (Shift: free) · right-click removes'));
   }
+}
+
+// ---------------------------------------------------------------- Find walls
+// A first draft of the walls from the picture. Click floor the finder missed; Shift-click
+// something it took for floor; the slider reaches further or holds back. Then Add walls and tidy up.
+async function startWallFind() {
+  const sc = scene(); if (!sc?.bg) { toast('Give the scene its map first', 'bad'); setTool('wall'); return null; }
+  const F = S.wallFind = { scene: sc.id, seeds: [], sens: S.wallSens ?? 0.5, sample: null, walls: [], busy: true };
+  const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; assets.url(sc.bg).then(u => { i.src = u; }); }).catch(() => null);
+  if (!img || S.wallFind !== F) return null;
+  F.img = img; F.sample = sampleImage(img, sc.grid);
+  F.busy = false;
+  runWallFind();
+  return F;
+}
+function runWallFind() {
+  const F = S.wallFind, sc = scene(); if (!F?.sample || !sc) return;
+  const r = detectWalls(F.img, sc.grid, { sample: F.sample, sensitivity: F.sens, seeds: F.seeds.filter(p => !p.not), not: F.seeds.filter(p => p.not) });
+  F.walls = r.walls; F.floor = r.floor;
+  S.view.previewWalls = r.walls; S.view.previewSeeds = F.seeds; S.view.dirty = true;
+  const info = $('#wf-info'); if (info) info.textContent = `${r.walls.length} wall${r.walls.length === 1 ? '' : 's'} · ${Math.round(r.floor * 100)}% floor`;
+}
+function wallFindBar(sb) {
+  const sc = scene();
+  const slider = el('input', { type: 'range', min: 0, max: 1, step: 0.05, value: S.wallSens ?? 0.5, style: { width: '120px' }, title: 'Left: hold back at faint edges. Right: reach further across texture.' });
+  const rerun = debounce(() => runWallFind(), 120);
+  slider.addEventListener('input', () => { S.wallSens = +slider.value; if (S.wallFind) { S.wallFind.sens = +slider.value; rerun(); } });
+  const auto = sc?.walls?.filter(w => w.auto).length || 0;
+  sb.append(el('span', { class: 'lbl' }, 'Find walls'),
+    el('span', { class: 'small', id: 'wf-info' }, 'Reading the map…'),
+    el('label', { class: 'row small', style: { gap: '6px' } }, el('span', { class: 'muted' }, 'Hold back'), slider, el('span', { class: 'muted' }, 'Reach')),
+    el('span', { class: 'small muted', title: 'Click any floor it missed. Shift-click anything it took for floor.' }, 'Click: floor · Shift-click: not floor'),
+    el('button', { class: 'btn small primary', type: 'button', onclick: () => applyWallFind() }, auto ? 'Replace found walls' : 'Add these walls'),
+    el('button', { class: 'btn small', type: 'button', onclick: () => { if (S.wallFind) { S.wallFind.seeds = []; runWallFind(); } } }, 'Clear clicks'),
+    el('button', { class: 'btn small ghost', type: 'button', onclick: () => setTool('wall') }, 'Cancel'));
+  if (!S.wallFind || S.wallFind.scene !== sc?.id) startWallFind(); else runWallFind();
+}
+function applyWallFind() {
+  const F = S.wallFind, sc = scene(); if (!F?.walls || !sc) return;
+  const n = F.walls.length;
+  change(() => {
+    sc.walls = (sc.walls || []).filter(w => !w.auto).concat(F.walls.map(w => ({ id: uid(8), ...w, auto: true })));
+    if (sc.vision) sc.vision.on = true; else sc.vision = { on: true, light: 'bright' };
+  }, { panel: false });
+  setTool('wall');
+  toast(`Added ${n} walls and turned vision on. Tidy up: right-click removes one, Erase by box cuts several, and a door drawn along a wall opens a gap in it.`, 'ok');
 }
 
 function doorHud(id, x, y) {
@@ -798,6 +854,7 @@ function viewScene(id) {
   if (S.prepFollow !== false && sc?.packRef?.section) S.prepSection = sc.packRef.section;
   if (S.tab === 'prep') renderPanel(true);
   S.drawer.pick = null; renderDrawer();
+  autoPlaceParty(sc);
   S.view.selected.clear();
   renderRail(); refreshMap(); if (S.tab === 'scene' || S.tab === 'tokens') renderPanel(true);
 }
@@ -872,6 +929,7 @@ function dmSceneView(sc) {
 
 function activate(id) {
   const sc = scene(id);
+  autoPlaceParty(sc);
   change(c => {
     c.activeSceneId = id;
     const lib = c.audio.library;
@@ -951,8 +1009,43 @@ async function setBackground(sc, file, squaresAcross = 0, quiet = false) {
     else if (found) { Object.assign(sc.grid, { size: found.size, ox: found.ox, oy: found.oy }); }
     else if (!sc._gridSet) sc.grid.size = Math.max(40, Math.round(dims.w / 30));
   }, { rail: true });
+  autoPlaceParty(sc, { img: await loadImg(url) });
   if (found && !quiet) toast(`Found the map’s grid: ${found.cols} × ${found.rows} squares. Check it in the Scene tab.`, 'ok');
   else if (!quiet) toast('Background set', 'ok');
+}
+
+// ---------------------------------------------------------------- the party on every scene
+// Each scene starts with the party's tokens on it, in a row with a square between them:
+// low in the picture on scene art (wherever covers least of it), low on a battle map.
+// Tokens nobody has moved yet follow the picture when it changes; ones you moved stay put.
+const loadImg = url => new Promise(res => { if (!url) return res(null); const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = url; });
+async function autoPlaceParty(sc, { img } = {}) {
+  if (!sc || !S.camp?.characters.length) return;
+  const removed = new Set(sc.partyRemoved || []);
+  const chars = S.camp.characters.filter(ch => !removed.has(ch.id));
+  const placeable = chars.filter(ch => { const t = sc.tokens.find(t => t.charId === ch.id); return !t || t.autoPlaced; });
+  const missing = chars.filter(ch => !sc.tokens.some(t => t.charId === ch.id));
+  if (!missing.length && (!img || !placeable.length)) { if (!sc.partyPlaced) sc.partyPlaced = true; return; }
+  if (img === undefined && sc.bg) img = await loadImg(await assets.url(sc.bg));
+  const sizes = placeable.map(ch => Math.max(1, Math.round(ch.size || 1)));
+  let start = null;
+  if (img && sc.kind !== 'art') {   // a battle map: stand them on floor, not in the void
+    try {
+      const Smp = sampleImage(img, sc.grid, 3), mask = floorMask(Smp, [], 0.5), g = sc.grid;
+      const floorAt = (cx, cy) => { let n = 0, k = 0; for (let fy = 0.2; fy < 1; fy += 0.3) for (let fx = 0.2; fx < 1; fx += 0.3) { const x = Math.floor((g.ox + (cx + fx) * g.size) / Smp.sx), y = Math.floor((g.oy + (cy + fy) * g.size) / Smp.sy); if (x < 0 || y < 0 || x >= Smp.nx || y >= Smp.ny) return false; n++; k += mask[y * Smp.nx + x]; } return k >= n * 0.75; };
+      start = floorRow(sc, sizes, floorAt);
+    } catch (e) { console.warn('floor placement', e); }
+  }
+  const cells = rowCells(start || partyRow(sc, sizes, img), sizes);
+  S.lastPlacement = { scene: sc.id, grid: { ...sc.grid }, start, cells };
+  change(() => {
+    placeable.forEach((ch, i) => {
+      let t = sc.tokens.find(t => t.charId === ch.id);
+      if (!t) { t = newToken({ name: ch.name, charId: ch.id, size: sizes[i] }); sc.tokens.push(t); }
+      t.x = cells[i].x; t.y = cells[i].y; t.autoPlaced = true;
+    });
+    sc.partyPlaced = true;
+  }, { panel: S.tab === 'tokens' });
 }
 
 async function findGrid(url) {
