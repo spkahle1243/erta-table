@@ -676,13 +676,14 @@ export class MapView {
         c.fillStyle = '#E2E8E4'; for (const [x, y] of [[w.x1, w.y1], [w.x2, w.y2]]) { c.beginPath(); c.arc(x, y, 3.2 / z, 0, Math.PI * 2); c.fill(); }
       }
       // proposed walls from Find walls, and the floor samples clicked
+      if (this.previewMask) { const M = this.previewMask; c.save(); c.imageSmoothingEnabled = false; c.drawImage(M.canvas, 0, 0, M.w, M.h); c.restore(); }
       if (this.previewWalls) {
         c.strokeStyle = 'rgba(0,0,0,.6)'; c.lineWidth = 7 / z;
         for (const w of this.previewWalls) { c.beginPath(); c.moveTo(w.x1, w.y1); c.lineTo(w.x2, w.y2); c.stroke(); }
         c.strokeStyle = '#4FE3F0'; c.lineWidth = 3.5 / z; c.setLineDash([9 / z, 5 / z]);
         for (const w of this.previewWalls) { c.beginPath(); c.moveTo(w.x1, w.y1); c.lineTo(w.x2, w.y2); c.stroke(); }
         c.setLineDash([]);
-        for (const p of this.previewSeeds || []) { c.fillStyle = p.not ? '#E5916A' : '#66C39D'; c.strokeStyle = '#0d1213'; c.lineWidth = 2 / z; c.beginPath(); c.arc(p.x, p.y, g * 0.18, 0, Math.PI * 2); c.fill(); c.stroke(); }
+        for (const p of this.previewSeeds || []) { c.fillStyle = p.floor ? '#66C39D' : '#E5916A'; c.strokeStyle = '#0d1213'; c.lineWidth = 2 / z; c.beginPath(); c.arc(p.x, p.y, g * 0.18, 0, Math.PI * 2); c.fill(); c.stroke(); }
       }
       const a = this.action;
       if (a?.kind === 'wall') { c.strokeStyle = a.door ? '#d6a73c' : '#66C39D'; c.lineWidth = 3.5 / z; c.setLineDash([6 / z, 5 / z]); c.beginPath(); c.moveTo(a.x1, a.y1); c.lineTo(a.x2, a.y2); c.stroke(); c.setLineDash([]); }

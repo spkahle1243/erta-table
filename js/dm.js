@@ -23,7 +23,7 @@ import { SYNTHS, synthName } from './sfx.js';
 import * as backup from './backup.js';
 import { watchForUpdates, refreshAndReload, VERSION } from './update.js';
 import { detectGrid, gridFromBox, guessCount } from './gridfit.js';
-import { detectWalls, sampleImage, floorMask, eraseBox, cutForDoor } from './wallfit.js';
+import { findWalls, fineSample, sampleImage, floorMask, eraseBox, cutForDoor } from './wallfit.js';
 import { partyRow, rowCells, floorRow } from './placement.js';
 import { SheetWindow, AREA_SHAPE, needsTarget } from './sheet.js';
 import { imageKitDialog, importZip, listenForKit, artFor } from './imagekit.js';
@@ -496,7 +496,7 @@ function buildApp() {
     },
     onWallAdd: w => change(() => { const sc = scene(); sc.walls ||= []; if (w.door) sc.walls = cutForDoor(sc.walls, w, sc.grid.size * 0.3); sc.walls.push({ id: uid(8), ...w, ...(w.door ? { open: false } : {}) }); }, { panel: false }),
     onWallErase: box => change(() => { const sc = scene(); sc.walls = eraseBox(sc.walls || [], box); }, { panel: false }),
-    onWallSeed: (x, y, not) => { const F = S.wallFind; if (!F) return; F.seeds.push({ x, y, not }); runWallFind(); },
+    onWallSeed: (x, y, floor) => { const F = S.wallFind; if (!F) return; F.seeds.push({ x, y, floor }); runWallFind(); },
     onWallRemove: id => change(() => { const sc = scene(); sc.walls = (sc.walls || []).filter(w => w.id !== id); }, { panel: false }),
     onLightAdd: (x, y) => change(() => { const sc = scene(); const L = LIGHTS[S.lightPreset] || LIGHTS.torch; (sc.lights ||= []).push({ id: uid(8), x, y, bright: L.bright, dim: L.dim, kind: S.lightPreset }); }, { panel: false }),
     onLightRemove: id => change(() => { const sc = scene(); sc.lights = (sc.lights || []).filter(l => l.id !== id); }, { panel: false }),
@@ -737,7 +737,7 @@ function setTool(id) {
     sb.hidden = false; sb.innerHTML = '';
     wallFindBar(sb);
   } else sb.hidden = true;
-  if (id !== 'wallfind' && S.wallFind) { S.wallFind = null; S.view.previewWalls = null; S.view.previewSeeds = null; }
+  if (id !== 'wallfind' && S.wallFind) { S.wallFind = null; S.view.previewWalls = null; S.view.previewSeeds = null; S.view.previewMask = null; }
   S.view.dirty = true;
 }
 
@@ -773,35 +773,51 @@ function wallBar(sb, id) {
 }
 
 // ---------------------------------------------------------------- Find walls
-// A first draft of the walls from the picture. Click floor the finder missed; Shift-click
-// something it took for floor; the slider reaches further or holds back. Then Add walls and tidy up.
+// A first draft of the walls from the picture. It takes the dark void and any light stonework
+// running between rooms as wall by itself; click any other wall (a roof, rock, hedge) to teach it
+// that colour, Shift-click floor it took for wall. Thin walls get one line down the middle, thick
+// ones a line round the edge, pillars a ring. Then Add walls and tidy up.
 async function startWallFind() {
   const sc = scene(); if (!sc?.bg) { toast('Give the scene its map first', 'bad'); setTool('wall'); return null; }
-  const F = S.wallFind = { scene: sc.id, seeds: [], sens: S.wallSens ?? 0.5, sample: null, walls: [], busy: true };
+  const F = S.wallFind = { scene: sc.id, seeds: [], sens: S.wallSens ?? 0.5, pillars: S.wallPillars ?? true, sample: null, walls: [], busy: true };
   const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; assets.url(sc.bg).then(u => { i.src = u; }); }).catch(() => null);
   if (!img || S.wallFind !== F) return null;
-  F.img = img; F.sample = sampleImage(img, sc.grid);
+  F.img = img;
+  await new Promise(r => setTimeout(r, 30));      // let "Reading the map…" paint first
+  if (S.wallFind !== F) return null;
+  F.sample = fineSample(img, sc.grid);
   F.busy = false;
   runWallFind();
   return F;
 }
+function solidOverlay(r, img) {
+  const { F } = r, cv = document.createElement('canvas'); cv.width = F.nx; cv.height = F.ny;
+  const cx = cv.getContext('2d'), im = cx.createImageData(F.nx, F.ny);
+  for (let i = 0; i < F.nx * F.ny; i++) if (r.solid[i]) { im.data[i * 4] = 229; im.data[i * 4 + 1] = 72; im.data[i * 4 + 2] = 60; im.data[i * 4 + 3] = 70; }
+  cx.putImageData(im, 0, 0);
+  return { canvas: cv, w: img.width, h: img.height };
+}
 function runWallFind() {
   const F = S.wallFind, sc = scene(); if (!F?.sample || !sc) return;
-  const r = detectWalls(F.img, sc.grid, { sample: F.sample, sensitivity: F.sens, seeds: F.seeds.filter(p => !p.not), not: F.seeds.filter(p => p.not) });
-  F.walls = r.walls; F.floor = r.floor;
-  S.view.previewWalls = r.walls; S.view.previewSeeds = F.seeds; S.view.dirty = true;
-  const info = $('#wf-info'); if (info) info.textContent = `${r.walls.length} wall${r.walls.length === 1 ? '' : 's'} · ${Math.round(r.floor * 100)}% floor`;
+  const r = findWalls(F.img, sc.grid, { sample: F.sample, sensitivity: F.sens, pillars: F.pillars, walls: F.seeds.filter(p => !p.floor), floors: F.seeds.filter(p => p.floor) });
+  F.walls = r.walls; F.open = r.open;
+  S.view.previewWalls = r.walls; S.view.previewSeeds = F.seeds; S.view.previewMask = solidOverlay(r, F.img); S.view.dirty = true;
+  const info = $('#wf-info'); if (info) info.textContent = `${r.walls.length} wall${r.walls.length === 1 ? '' : 's'} · ${Math.round((1 - r.open) * 100)}% marked solid`;
 }
 function wallFindBar(sb) {
   const sc = scene();
-  const slider = el('input', { type: 'range', min: 0, max: 1, step: 0.05, value: S.wallSens ?? 0.5, style: { width: '120px' }, title: 'Left: hold back at faint edges. Right: reach further across texture.' });
+  const slider = el('input', { type: 'range', min: 0, max: 1, step: 0.05, value: S.wallSens ?? 0.5, style: { width: '120px' }, title: 'Left: only colours very like the wall you clicked. Right: take in lighter and darker shades of it too.' });
   const rerun = debounce(() => runWallFind(), 120);
   slider.addEventListener('input', () => { S.wallSens = +slider.value; if (S.wallFind) { S.wallFind.sens = +slider.value; rerun(); } });
+  const pill = el('input', { type: 'checkbox', checked: S.wallPillars ?? true });
+  pill.addEventListener('change', () => { S.wallPillars = pill.checked; if (S.wallFind) { S.wallFind.pillars = pill.checked; runWallFind(); } });
   const auto = sc?.walls?.filter(w => w.auto).length || 0;
   sb.append(el('span', { class: 'lbl' }, 'Find walls'),
     el('span', { class: 'small', id: 'wf-info' }, 'Reading the map…'),
-    el('label', { class: 'row small', style: { gap: '6px' } }, el('span', { class: 'muted' }, 'Hold back'), slider, el('span', { class: 'muted' }, 'Reach')),
-    el('span', { class: 'small muted', title: 'Click any floor it missed. Shift-click anything it took for floor.' }, 'Click: floor · Shift-click: not floor'),
+    el('span', { class: 'small muted', title: 'Red tint: what it takes for wall. Click a wall it missed (a roof, rock, a hedge) and it takes every patch of that colour. Shift-click floor it took for wall, or a prop it ringed.' }, 'Click: wall · Shift-click: floor'),
+    el('span', { style: { flexBasis: '100%', height: 0 } }),
+    el('label', { class: 'row small', style: { gap: '6px' } }, el('span', { class: 'muted' }, 'Strict'), slider, el('span', { class: 'muted' }, 'Loose')),
+    el('label', { class: 'check small', title: 'Ring small round lumps (pillars, posts). Turn off if it rings props.' }, pill, 'Pillars'),
     el('button', { class: 'btn small primary', type: 'button', onclick: () => applyWallFind() }, auto ? 'Replace found walls' : 'Add these walls'),
     el('button', { class: 'btn small', type: 'button', onclick: () => { if (S.wallFind) { S.wallFind.seeds = []; runWallFind(); } } }, 'Clear clicks'),
     el('button', { class: 'btn small ghost', type: 'button', onclick: () => setTool('wall') }, 'Cancel'));
