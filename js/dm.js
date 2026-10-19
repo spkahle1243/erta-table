@@ -3,21 +3,25 @@
 
 import { $, el, uid, debounce, throttle, toast, copyText, pickFiles, downloadBlob, fmtBytes, clone } from './util.js';
 import { campaigns, assets, kv, persistStorage } from './store.js';
-import { Host } from './net.js';
+import { Host, setRelay, encodeRelay, testRelay } from './net.js';
 import { MapView } from './render.js';
 import { FogMask, compact } from './fog.js';
 import { AudioEngine, audioDuration } from './audio.js';
 import { newCampaign, newCharacter, newScene, newToken, tokenStats, playerView, THEMES, DISPOSITION_COLORS } from './model.js';
 import { renderMonsterPanel as monsterPanel } from './monster.js';
-import { ICONS, modal, confirmBox, promptBox, popover, closePopover, hpConditionsEditor, conditionChips, renderHandout, avatar } from './ui.js';
-import { roll as rollDice, withAdvantage, DiceOverlay, RollLog } from './dice.js';
+import { ICONS, modal, confirmBox, promptBox, popover, closePopover, hpConditionsEditor, conditionChips, renderHandout, avatar, titleCard } from './ui.js';
+import { roll as rollDice, withAdvantage, DiceOverlay, RollLog, DICE_SKINS } from './dice.js';
 import { newCombat, combatant, sortCombat, current as currentCombatant, advance, combatView, renderStrip } from './combat.js';
 import { loadBestiary, searchBestiary, renderStatBlock } from './statblock.js';
-import { importPack, paneprep, actorModal, encounterTokens, clockWidget, orderPackScenes } from './prep.js';
+import { importPack, paneprep, actorModal, encounterTokens, clockWidget, orderPackScenes, loadPrepFile } from './prep.js';
 import { Engine, actorFor, sheetNumbers, stripHtml } from './rules.js';
 import { LIGHTS, moveBlocked, visionOn } from './vision.js';
 import { tokenSight, tokenLight } from './model.js';
 import { wrapUpDialog } from './wrapup.js';
+import { renderNpcDrawer, drawerSection, presentNpcs } from './drawer.js';
+import { SYNTHS, synthName } from './sfx.js';
+import * as backup from './backup.js';
+import { detectGrid, gridFromBox, guessCount } from './gridfit.js';
 import { SheetWindow, AREA_SHAPE, needsTarget } from './sheet.js';
 import { imageKitDialog, importZip, listenForKit, artFor } from './imagekit.js';
 
@@ -29,6 +33,7 @@ const S = {
   dice: null, log: null, prepSection: null, prepFollow: true,
   engine: null, targets: {}, pending: new Map(), sheetWin: null, engScene: null,
   asks: new Map(), turnBusy: false, monPin: null, lightPreset: 'torch',
+  drawer: { show: false, pick: null, open: new Set() },
 };
 window.__dm = S; // handy for debugging from the console
 queueMicrotask(() => { S.change = (fn, o) => change(fn, o); });
@@ -40,6 +45,7 @@ async function renderHome() {
   const root = $('#root');
   root.innerHTML = '';
   const list = (await campaigns.list()).sort((a, b) => b.updated - a.updated);
+  const orphans = await backup.orphanSnapshots().catch(() => []);
   const home = el('div', { class: 'home' }, el('div', { class: 'home-inner' },
     el('div', { class: 'eyebrow' }, 'Erta Table · DM'),
     el('h1', {}, 'Your campaigns'),
@@ -58,8 +64,12 @@ async function renderHome() {
       list.some(c => c.theme === 'ironclad') ? null : el('button', { class: 'btn copper', type: 'button', onclick: () => createStarter('ironclad') }, 'Start Ironclad Inquiries (Boon, Orek, Vali)'),
       list.some(c => c.theme === 'erta') ? null : el('button', { class: 'btn copper', type: 'button', onclick: () => createStarter('erta') }, 'Start Erta'),
       el('button', { class: 'btn', type: 'button', onclick: createBlank }, 'New campaign'),
-      el('button', { class: 'btn', type: 'button', onclick: importBackup }, 'Restore a backup')),
-    el('p', { class: 'note' }, 'Everything is saved in this browser on this computer. Use “Back up” inside a campaign to keep a copy elsewhere or move to another computer; the player links keep working after a restore.'),
+      el('button', { class: 'btn', type: 'button', onclick: importBackup }, 'Restore a backup'),
+      backup.folderSupported() ? el('button', { class: 'btn', type: 'button', onclick: restoreFromFolder }, 'Restore from a folder') : null),
+    orphans.length ? el('div', { class: 'stack', style: { marginTop: '18px' } }, el('div', { class: 'lbl' }, 'Snapshots of campaigns that are no longer here'),
+      orphans.map(o => el('div', { class: 'row' }, el('span', { class: 'grow' }, `${o.latest.name} · ${new Date(o.latest.ts).toLocaleString()} · ${o.count} snapshot${o.count === 1 ? '' : 's'}`),
+        el('button', { class: 'btn small', type: 'button', onclick: async () => { const c = await backup.loadSnapshot(o.id, o.latest.ts); if (c) restoreCampaign(c, 'the snapshot'); } }, 'Bring it back')))) : null,
+    el('p', { class: 'note' }, 'Everything is saved in this browser on this computer, with automatic snapshots every ten minutes of play. For a copy elsewhere, pick a backup folder in a campaign’s Settings (Chrome, Edge) or use “Back up”; the player links keep working after a restore.'),
   ));
   root.append(home);
 }
@@ -99,6 +109,8 @@ async function openCampaign(id) {
   startHost();
   autoAttachSheets();
   listenForKit(kitCtx);
+  S.lastSnapAt = 0; S.folderErr = null;
+  setTimeout(() => autoBackup('Opened', true), 1500);
   S.audio = new AudioEngine(id => assets.url(id));
   const vols = await kv.get('dm-volumes'); if (vols) Object.assign(S.audio.vol, vols);
   const unlock = () => { S.audio.unlock(); syncAudio(); window.removeEventListener('pointerdown', unlock, true); window.removeEventListener('keydown', unlock, true); };
@@ -166,7 +178,10 @@ const railSoon = debounce(() => renderRail(), 300);
 
 function startHost() {
   S.host?.destroy();
+  setRelay(S.camp.settings.relay || null);
   const host = new Host(S.camp.hostId, async hello => {
+    if (hello.role === 'companion') return hello.key && hello.key === S.camp.companionKey ? { ok: true, info: { charId: null, name: 'Your second screen', role: 'companion', color: DM_COLOR } } : { ok: false, reason: 'This second-screen link was reset. Copy the new one from the DM’s Settings.' };
+    if (hello.role === 'watch') return hello.key && hello.key === S.camp.watchKey ? { ok: true, info: { charId: null, name: 'Spectator', role: 'watch', color: '#93B5D8' } } : { ok: false, reason: 'This spectator link was reset. Ask the DM for the new one.' };
     const ch = S.camp.characters.find(x => x.key === hello.key);
     if (!ch) return { ok: false, reason: 'This link is no longer valid. Ask your DM for a new one.' };
     return { ok: true, info: { charId: ch.id, name: ch.name, color: ch.color } };
@@ -175,8 +190,9 @@ function startHost() {
   host.on('status', s => renderStatus());
   host.on('clients', () => { renderStatus(); if (S.tab === 'party') renderPanel(); });
   host.on('join', (pid, info) => {
-    toast(`${info.name} joined`, 'ok');
-    host.send(pid, { t: 'welcome', view: viewFor(info.charId) });
+    toast(info.role === 'companion' ? 'Your second screen is connected' : info.role === 'watch' ? 'A spectator view connected' : `${info.name} joined`, 'ok');
+    if (info.role === 'companion') { host.send(pid, { t: 'welcome', companion: companionView() }); return; }
+    host.send(pid, { t: 'welcome', view: viewFor(info.charId), watch: info.role === 'watch' });
     host.send(pid, { t: 'rolls', list: S.camp.rolls.filter(r => !r.hidden).slice(-40).map(publicCard) });
     host.send(pid, { t: 'targets', map: targetMap() });
   });
@@ -195,11 +211,14 @@ const pushState = throttle(() => {
   if (!S.host || !S.camp) return;
   const sc = activeScene();
   if (sc && sc.fog.on) S.activeFog.update(sc, 1024);
-  S.host.broadcast(info => ({ t: 'state', view: playerView(S.camp, info.charId, sc, (x, y) => S.activeFog.fogged(x, y)) }));
+  let cv = null;
+  S.host.broadcast(info => info.role === 'companion' ? { t: 'cstate', view: cv ||= companionView() } : { t: 'state', view: playerView(S.camp, info.charId, sc, (x, y) => S.activeFog.fogged(x, y)) });
   syncAudio();
 }, 70);
 
 function onPlayerMessage(pid, m, info) {
+  if (info?.role === 'watch') return;               // spectators only watch
+  if (info?.role === 'companion') { companionCmd(pid, m); return; }
   const c = S.camp, sc = activeScene();
   const ownsToken = id => sc?.tokens.find(t => t.id === id && ((t.charId && t.charId === info.charId) || (t.owner && t.owner === info.charId)));
   switch (m.t) {
@@ -230,6 +249,11 @@ function onPlayerMessage(pid, m, info) {
     case 'answer': {
       const a = S.asks.get(String(m.id || ''));
       if (a && a.charId === info.charId && (m.choice == null || a.options.some(o => o.id === m.choice))) a.done(m.choice ?? null);
+      return;
+    }
+    case 'dice-skin': {
+      const ch = c.characters.find(x => x.id === info.charId); if (!ch) return;
+      change(() => { ch.dice = DICE_SKINS[m.skin] ? m.skin : null; }, { panel: S.tab === 'party' });
       return;
     }
     case 'light': {
@@ -318,13 +342,15 @@ function sanitizeRoll(r) {
 }
 
 function recordRoll(r) {
+  // each roller's dice skin travels with the roll, so every screen shows the same dice
+  if (r.by) { const ch = r.by.charId && S.camp.characters.find(c => c.id === r.by.charId); r.by.dice = ch ? (ch.dice || null) : (r.by.name === 'DM' ? S.camp.settings.dmDice || null : null); }
   S.camp.rolls.push(r);
   if (S.camp.rolls.length > 200) S.camp.rolls.splice(0, S.camp.rolls.length - 200);
   save();
 }
 
 async function showRoll(r) {
-  await S.dice?.show(r, r.by?.color || DM_COLOR);
+  await S.dice?.show(r, r.by?.color || DM_COLOR, r.by?.dice);
   S.log?.add(r, { mine: r.by?.name === 'DM' });
 }
 
@@ -363,7 +389,49 @@ function playTrack(track) {
   }
   change(c => { c.audio[track.kind] = { trackId: track.id, asset: track.asset, name: track.name, startedAt: Date.now(), loop: true, vol: track.vol ?? 1 }; });
 }
-function stopLayer(kind) { change(c => { c.audio[kind] = null; }); }
+function stopLayer(kind) { change(c => { c.audio[kind] = null; if (kind === 'music') c.audio.preCombat = null; }); }
+
+// A built-in sound for everyone (js/sfx.js).
+function playSynth(key, vol = 1) {
+  S.host?.broadcast({ t: 'sfx', synth: key, vol });
+  S.audio?.synth(key, vol);
+}
+// The sound board: built-ins first, then the library's effects. Number keys 1–9 and 0 play the first ten.
+function boardPads() {
+  const lib = S.camp.audio.library.filter(t => t.kind === 'sfx' && t.asset).map(t => ({ name: t.name, play: () => playTrack(t) }));
+  const hide = new Set(S.camp.audio.hiddenSynths || []);
+  const syn = SYNTHS.filter(([k]) => !hide.has(k)).map(([k, n]) => ({ name: n, synth: k, play: () => playSynth(k) }));
+  return [...lib, ...syn];
+}
+
+// Combat music: the scene's combat loop (or your default) when initiative starts, and back when the fight ends.
+// An area animation on every screen showing that scene.
+function areaFx(tpl, kind) {
+  if (S.camp.settings.areaFx === false) return;
+  const sc = S.engScene || scene();
+  const t = { shape: tpl.shape, x: tpl.x, y: tpl.y, dir: tpl.dir || 0, len: tpl.len, wid: tpl.wid };
+  if (sc?.id === S.viewId) S.view?.playFx(t, kind);
+  if (sc?.id === S.camp.activeSceneId) S.host?.broadcast({ t: 'fx', scene: sc.id, tpl: t, kind });
+  const sfx = { fire: 'fire', thunder: 'thunder', lightning: 'thunder', cold: 'wind', acid: 'splash', poison: 'wind', necrotic: 'rumble', radiant: 'bell', force: 'magic', psychic: 'magic', bludgeoning: 'explosion' }[kind] || 'magic';
+  if (S.camp.settings.areaFxSound !== false) { S.audio?.synth(sfx, 0.7); if (sc?.id === S.camp.activeSceneId) S.host?.broadcast({ t: 'sfx', synth: sfx, vol: 0.7 }); }
+}
+
+function combatTrackFor(sc) {
+  const lib = S.camp.audio.library;
+  const id = sc?.combatMusic || S.camp.audio.combatDefault;
+  return lib.find(t => t.id === id && t.asset) || null;
+}
+function combatMusicOn(sc) {
+  if (S.camp.settings.combatMusic === false) return;
+  const tr = combatTrackFor(sc); if (!tr) return;
+  if (S.camp.audio.music?.trackId === tr.id) return;
+  change(c => { c.audio.preCombat = c.audio.music?.combat ? c.audio.preCombat : (c.audio.music || null); c.audio.music = { trackId: tr.id, asset: tr.asset, name: tr.name, startedAt: Date.now(), loop: true, vol: tr.vol ?? 1, combat: true }; }, { panel: S.tab === 'audio' });
+  toast(`Combat music: ${tr.name}`);
+}
+function combatMusicOff() {
+  const a = S.camp.audio; if (!a.music?.combat) return;
+  change(c => { c.audio.music = c.audio.preCombat ? { ...c.audio.preCombat } : null; c.audio.preCombat = null; }, { panel: S.tab === 'audio' });
+}
 function togglePause(kind) {
   change(c => {
     const a = c.audio[kind]; if (!a) return;
@@ -390,7 +458,9 @@ function buildApp() {
       el('div', { class: 'who', id: 'who' }),
       el('span', { class: 'status', id: 'net-status' }),
       el('button', { class: 'btn small', id: 'pause-btn', type: 'button', onclick: () => change(c => { c.paused = !c.paused; }) }, 'Pause'),
+      el('button', { class: 'btn small', id: 'who-btn', type: 'button', title: 'NPC cards for the people in this scene (E)', onclick: () => toggleDrawer() }, 'Who’s here'),
       el('button', { class: 'btn small', type: 'button', title: 'Recap the session, the clocks and the loot, ready for your prep project', onclick: () => openWrapUp() }, 'Wrap up'),
+      el('button', { class: 'btn small copper', id: 'backup-chip', type: 'button', hidden: true, title: 'The browser needs your OK to keep writing backups to your folder', onclick: async () => { if (await backup.resumeFolder()) autoBackup('', true); renderBackupChip(); } }, 'Resume folder backups'),
       el('button', { class: 'btn small', type: 'button', onclick: exportBackup }, 'Back up'),
       el('button', { class: 'btn icon ghost', type: 'button', title: 'Panel', html: ICONS.menu, onclick: () => $('#app').classList.toggle('show-panel') })),
     el('nav', { class: 'rail', id: 'rail', 'aria-label': 'Scenes' }),
@@ -402,6 +472,7 @@ function buildApp() {
       el('div', { class: 'banner', id: 'banner', hidden: true }),
       el('div', { class: 'combat-strip', id: 'combat-strip', hidden: true }),
       el('div', { class: 'mon-panel', id: 'mon-panel', hidden: true }),
+      el('div', { class: 'npc-drawer', id: 'npc-drawer', hidden: true }),
       el('div', { class: 'dock', id: 'dock' }),
       el('div', { class: 'empty-stage', id: 'empty-stage', hidden: true })),
     el('aside', { class: 'panel', id: 'panel' },
@@ -428,6 +499,7 @@ function buildApp() {
     onDoorContext: (id, x, y) => doorHud(id, x, y),
     onRuler: pts => { if (viewingActive()) S.host.broadcast({ t: 'ruler', key: 'dm', pts, color: '#E5916A', name: 'DM' }); },
     onPing: (x, y, pull) => { if (viewingActive()) S.host.broadcast({ t: 'ping', x, y, color: '#E5916A', pull }); if (pull) toast(viewingActive() ? 'Pulled everyone’s view here' : 'Players aren’t on this scene'); },
+    onGridBox: box => onGridBox(box),
     onTemplateAdd: tpl => change(() => scene().templates.push({ ...tpl, id: uid(8), owner: 'dm', color: '#E5916A' }), { panel: false }),
     onTemplateRemove: id => change(() => { const sc = scene(); sc.templates = sc.templates.filter(t => t.id !== id); }, { panel: false }),
     onFog: op => change(() => { const sc = scene(); sc.fog.ops.push(op); sc.fog.ops = compact(sc.fog.ops); }, { panel: false }),
@@ -441,6 +513,7 @@ function buildApp() {
   });
   buildToolbar();
   S.dice = new DiceOverlay();
+  S.dice.onFlourish = k => S.audio?.synth(k);
   const dock = $('#dock');
   const head = el('button', { class: 'dock-h', type: 'button', onclick: () => { dock.classList.toggle('closed'); localStorage.setItem('erta-dock', dock.classList.contains('closed') ? 'closed' : 'open'); } }, el('span', {}, 'Dice & rolls'), el('span', { class: 'chev' }, '▾'));
   dock.append(head);
@@ -455,6 +528,7 @@ const dragOut = throttle((id, x, y) => S.host.broadcast({ t: 'drag', id, x, y })
 
 async function goHome() {
   save.flush();
+  await autoBackup();
   S.host?.destroy(); S.host = null;
   if (S.audio) { S.audio.set('music', null); S.audio.set('ambience', null); }
   S.camp = null;
@@ -462,7 +536,25 @@ async function goHome() {
   renderHome();
 }
 
-function refreshAll() { renderTitle(); renderStatus(); renderRail(); refreshMap(); renderTabs(); renderPanel(true); }
+function refreshAll() { renderTitle(); renderStatus(); renderRail(); refreshMap(); renderTabs(); renderPanel(true); renderDrawer(); }
+
+// ---------------------------------------------------------------- Who's here
+function toggleDrawer(show = !S.drawer.show) { S.drawer.show = show; S.drawer.pick = null; renderDrawer(); }
+function renderDrawer() {
+  const box = $('#npc-drawer'), btn = $('#who-btn'); if (!box || !S.camp) return;
+  const { pack, section } = drawerSection(S.camp, scene(), S.prepSection);
+  const n = presentNpcs(pack, section).length;
+  if (btn) { btn.hidden = !pack; btn.textContent = n ? `Who’s here · ${n}` : 'Who’s here'; btn.setAttribute('aria-pressed', S.drawer.show ? 'true' : 'false'); }
+  if (!S.drawer.show || !pack) { box.hidden = true; return; }
+  renderNpcDrawer(box, {
+    camp: S.camp, scene: scene(), prepSection: S.prepSection, pick: S.drawer.pick, open: S.drawer.open,
+    onPick: v => { S.drawer.pick = v; renderDrawer(); },
+    onClose: () => toggleDrawer(false),
+    openActor: id => { const a = S.camp.actors[id]; if (a) actorModal(a, (f, label) => dmRoll(f, { label })); },
+    placeActor: (pk, key, name) => placeEncounter(pk, { key: 'npc', name, groups: [{ label: name, foes: [{ actor: key, count: 1, name, disposition: 'neutral' }] }] }, 0, true),
+    showHandout: h => { change(c => { c.handout = { ...h, at: Date.now() }; }); toast('Showing to players'); },
+  });
+}
 function renderTitle() { $('#camp-title').textContent = S.camp.name; document.title = S.camp.name + ' · Erta Table'; }
 
 function renderStatus() {
@@ -474,6 +566,10 @@ function renderStatus() {
   const online = new Set([...h.clients.values()].map(c => c.info.charId));
   const who = $('#who'); who.innerHTML = '';
   for (const ch of S.camp.characters) who.append(el('span', { class: 'p' + (online.has(ch.id) ? ' on' : ''), style: { background: ch.color }, title: `${ch.name} (${ch.player || 'player'}): ${online.has(ch.id) ? 'connected' : 'not connected'}` }, initials(ch.name)));
+  const roles = [...h.clients.values()].map(c => c.info.role).filter(Boolean);
+  if (roles.includes('companion')) who.append(el('span', { class: 'p on extra', title: 'Your second screen is connected' }, '⧉'));
+  const w = roles.filter(r => r === 'watch').length;
+  if (w) who.append(el('span', { class: 'p on extra', title: `${w} spectator view${w === 1 ? '' : 's'} watching` }, '◉' + (w > 1 ? w : '')));
   const cc = $('#clock-chips');
   if (cc) {
     cc.innerHTML = '';
@@ -490,6 +586,96 @@ function renderStatus() {
 }
 function clockEvent(k, was) { journal('clock', `${k.name}: ${was} → ${k.value}${k.steps?.[k.value] ? ' (' + k.steps[k.value] + ')' : ''}`, { clock: k.id, name: k.name, from: was, to: k.value }); }
 const initials = n => String(n || '?').split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+
+// ======================================================================= second screen & spectators
+// The DM's second screen (a tablet beside you) gets this: the tracker with real HP, the clocks,
+// the prep for the live scene, music and the sound board, the party, and the last rolls.
+function companionView() {
+  const c = S.camp, sc = activeScene() || scene();
+  const online = new Set([...(S.host?.clients.values() || [])].map(x => x.info.charId).filter(Boolean));
+  const cb = c.combat, csc = cb && c.scenes.find(x => x.id === cb.sceneId);
+  const { pack, section } = drawerSection(c, sc, S.prepSection);
+  const cur = cb ? currentCombatant(cb) : null;
+  return {
+    name: c.name, paused: !!c.paused, at: Date.now(),
+    scene: sc ? { id: sc.id, name: sc.name, notes: sc.notes || '', live: sc.id === c.activeSceneId } : null,
+    scenes: c.scenes.map(x => ({ id: x.id, name: x.name, live: x.id === c.activeSceneId })),
+    combat: cb ? { round: cb.round, started: !!cb.started, busy: !!S.turnBusy, list: cb.list.map(x => {
+      const t = csc?.tokens.find(t => t.id === x.tokenId); const st = t ? tokenStats(c, t) : null;
+      return { id: x.id, token: x.tokenId, name: x.name, init: x.init, pc: !!x.charId, hidden: !!x.hidden || !!t?.hidden, hp: st?.hp || null, ac: st?.ac ?? null, cond: (st?.conditions || []).map(k => String(k).replace(/:\d+$/, '')), current: x === cur, down: !!x.defeated || (st && st.hp?.value <= 0) };
+    }) } : null,
+    clocks: (c.clocks || []).filter(k => !c.activePack || k.pack === c.activePack || !k.pack).map(k => ({ id: k.id, name: k.name, size: k.size, value: k.value, visible: !!k.visible, goal: k.goal || '', step: k.steps?.[k.value] || '' })),
+    audio: { music: c.audio.music?.name || null, ambience: c.audio.ambience?.name || null,
+      tracks: c.audio.library.filter(t => t.kind !== 'sfx' && t.asset).map(t => ({ id: t.id, name: t.name, kind: t.kind, playing: c.audio[t.kind]?.trackId === t.id })),
+      pads: boardPads().map((p, i) => ({ i, name: p.name })) },
+    party: c.characters.map(ch => ({ id: ch.id, name: ch.name, color: ch.color, hp: ch.hp, ac: ch.ac, cond: (ch.conditions || []).map(k => String(k).replace(/:\d+$/, '')), online: online.has(ch.id), react: !!ch.reactUsed, conc: ch.concentration?.name || null })),
+    waiting: [...S.pending.values()].map(p => `${p.name}: ${p.label}`),
+    rolls: c.rolls.filter(r => !r.undone).slice(-14).reverse().map(r => r.kind === 'card' ? { card: true, title: r.title, lines: (r.lines || []).map(l => l.t).slice(0, 10) } : { title: (r.by?.name || '') + (r.label ? ': ' + r.label : ''), formula: r.formula, total: r.total, nat: r.terms?.some(t => t.sides === 20) ? r.nat : null, hidden: !!r.hidden }),
+    prep: pack ? { pack: pack.id, title: pack.title, sections: pack.sections.map(x => ({ id: x.id, num: x.num, title: x.title })), current: section?.id || null } : null,
+    npcs: presentNpcs(pack, section).map(n => ({ name: n.name, role: n.role || n.walkOn || '', fields: n.fields, line: n.line })),
+  };
+}
+
+function companionCmd(pid, m) {
+  const c = S.camp;
+  if (m.t === 'prep') {   // the prep text for a section, sent on request (it can be long)
+    const pack = c.packs?.[m.pack]; const sec = pack?.sections.find(x => x.id === m.id);
+    if (sec) S.host.send(pid, { t: 'cprep', pack: pack.id, id: sec.id, html: sec.html, css: pack.css || '' });
+    return;
+  }
+  if (m.t !== 'cmd') return;
+  switch (m.op) {
+    case 'next': nextTurn(); return;
+    case 'prev': { const cb = c.combat; if (cb) change(() => { advance(cb, -1); }); return; }
+    case 'hp': {
+      const cb = c.combat, csc = cb && c.scenes.find(x => x.id === cb.sceneId);
+      const t = (csc || activeScene())?.tokens.find(t => t.id === m.token); if (!t || !S.engine) return;
+      S.engScene = csc || activeScene();
+      const A = S.engine.actor(t), n = Math.abs(Math.round(+m.delta || 0)); if (!n) return;
+      const card = S.engine.newCard(`${A.name}: ${m.delta < 0 ? 'damage' : 'healing'} from the DM`);
+      if (m.delta < 0) S.engine.applyDamage(A, n, card); else S.engine.applyHeal(A, n, card);
+      postCard(card); change(() => {}, { panel: ['tokens', 'party', 'combat'].includes(S.tab) });
+      return;
+    }
+    case 'clock': { const k = (c.clocks || []).find(x => x.id === m.id); if (!k) return; const was = k.value; const v = Math.max(0, Math.min(k.size, Math.round(+m.value))); if (v === was) return; change(() => { k.value = v; }, { rail: false }); clockEvent(k, was); renderStatus(); return; }
+    case 'clock-vis': { const k = (c.clocks || []).find(x => x.id === m.id); if (k) change(() => { k.visible = !k.visible; }); return; }
+    case 'play': { const t = c.audio.library.find(x => x.id === m.id); if (t) playTrack(t); return; }
+    case 'stop': if (['music', 'ambience'].includes(m.layer)) stopLayer(m.layer); return;
+    case 'pad': { const p = boardPads()[m.i]; if (p) p.play(); return; }
+    case 'notes': { const x = c.scenes.find(s => s.id === m.scene); if (x) change(() => { x.notes = String(m.text || '').slice(0, 20000); }, { panel: S.tab === 'scene' }); return; }
+    case 'show': { if (c.scenes.some(s => s.id === m.scene)) { viewScene(m.scene); activate(m.scene); } return; }
+    case 'pause': change(cc => { cc.paused = !cc.paused; }); return;
+  }
+}
+
+function secondScreenLink(kind) {
+  const base = location.origin + location.pathname.replace(/[^/]*$/, '');
+  const peer = new URLSearchParams(location.search).get('peer');
+  const r = encodeRelay(S.camp.settings.relay);
+  const q = peer ? '?peer=' + peer : '';
+  return kind === 'companion' ? `${base}companion.html${q}#h=${S.camp.hostId}&k=${S.camp.companionKey}${r ? '&r=' + r : ''}`
+    : `${base}play.html${q}#h=${S.camp.hostId}&w=${S.camp.watchKey}${r ? '&r=' + r : ''}`;
+}
+
+function screensBox() {
+  const c = S.camp;
+  if (!c.companionKey || !c.watchKey) { c.companionKey ||= uid(18); c.watchKey ||= uid(18); save(); }
+  const row = (kind, title, text) => {
+    const link = el('input', { type: 'text', readonly: true, value: secondScreenLink(kind) });
+    return el('div', { class: 'stack', style: { gap: '6px' } }, el('b', {}, title), el('p', { class: 'small muted', style: { margin: 0 } }, text),
+      el('div', { class: 'row' }, link, el('button', { class: 'btn small', type: 'button', html: ICONS.copy + ' Copy', onclick: async () => { if (await copyText(link.value)) toast('Link copied', 'ok'); } }),
+        el('button', { class: 'btn small ghost', type: 'button', title: 'Open it in a new window', onclick: () => window.open(link.value, '_blank') }, 'Open')));
+  };
+  return el('div', { class: 'stack' },
+    row('companion', 'Second DM screen', 'Open this on a tablet or a second monitor: the tracker with real HP, next turn, the clocks, the prep for the live scene, music and the sound board. It controls the table, so keep it to yourself.'),
+    row('watch', 'Spectator view', 'A clean, read-only view of what the party sees, with dice, title cards and music: for streaming or recording (OBS: add it as a Browser source), or a TV at the table.'),
+    el('button', { class: 'btn small ghost', type: 'button', title: 'Old second-screen and spectator links stop working', onclick: async () => {
+      if (!(await confirmBox('Reset these links?', 'The old second-screen and spectator links stop working. Copy the new ones after.', { ok: 'Reset' }))) return;
+      change(cc => { cc.companionKey = uid(18); cc.watchKey = uid(18); });
+      for (const x of S.host?.clients.values() || []) if (x.info.role) { try { x.conn.close(); } catch {} }
+      renderPanel(true);
+    } }, 'Reset these links'));
+}
 
 // ======================================================================= toolbar
 
@@ -518,6 +704,8 @@ function buildToolbar() {
     if (!S.camp || e.ctrlKey || e.metaKey || e.altKey || e.target.closest('input, textarea, select')) return;
     if (e.key.toLowerCase() === 'n' && S.camp.combat) { nextTurn(); return; }
     if (e.key.toLowerCase() === 't') { toggleTarget('dm', S.view.hover, e.shiftKey); return; }
+    if (e.key.toLowerCase() === 'e') { toggleDrawer(); return; }
+    if (/^[0-9]$/.test(e.key)) { const p = boardPads()[(+e.key + 9) % 10]; if (p) { p.play(); toast('♪ ' + p.name); } return; }
     const t = KEYS[e.key.toLowerCase()]; if (t) setTool(t);
   });
 }
@@ -609,6 +797,7 @@ function viewScene(id) {
   const sc = S.camp.scenes.find(s => s.id === id);
   if (S.prepFollow !== false && sc?.packRef?.section) S.prepSection = sc.packRef.section;
   if (S.tab === 'prep') renderPanel(true);
+  S.drawer.pick = null; renderDrawer();
   S.view.selected.clear();
   renderRail(); refreshMap(); if (S.tab === 'scene' || S.tab === 'tokens') renderPanel(true);
 }
@@ -692,7 +881,33 @@ function activate(id) {
     }
   }, { rail: true });
   toast(`Players now see “${sc.name}”`, 'ok');
+  if (S.camp.settings.titleCards !== false) showTitleCard(titleFor(sc));
   journal('scene', sc.name, { scene: sc.name, section: sc.packRef?.section || null, pack: sc.packRef?.pack || null });
+}
+
+// ---------------------------------------------------------------- title cards
+function titleFor(sc) {
+  const pack = sc.packRef && S.camp.packs?.[sc.packRef.pack];
+  const sec = pack?.sections.find(x => x.id === sc.packRef.section);
+  let sub = '';
+  if (sec) { const d = new DOMParser().parseFromString(sec.html, 'text/html'); sub = [...d.querySelectorAll('.scene-head .chips .chip')].map(x => x.textContent.trim()).filter(Boolean).join(' · '); }
+  const eyebrow = sec && /^\d+$/.test(sec.num || '') ? `Scene ${sec.num}` : (sec?.num === '☼' ? sec.title : '');
+  return { eyebrow, title: sc.name.replace(/\s*\(battle map\)$/i, ''), sub };
+}
+function showTitleCard(card) {
+  if (!card?.title) return;
+  S.host?.broadcast({ t: 'title', ...card });
+  titleCard(card, { mini: true });
+}
+function titleCardDialog(sc) {
+  const d = sc ? titleFor(sc) : { eyebrow: '', title: '', sub: '' };
+  const f = k => { const i = el('input', { type: 'text', value: d[k] || '' }); i.addEventListener('input', () => { d[k] = i.value; }); return i; };
+  modal({ title: 'Title card', body: el('div', { class: 'stack' },
+      el('label', { class: 'field' }, el('span', {}, 'Above (small)'), f('eyebrow')),
+      el('label', { class: 'field' }, el('span', {}, 'Title'), f('title')),
+      el('label', { class: 'field' }, el('span', {}, 'Below'), f('sub')),
+      el('p', { class: 'small muted' }, 'Fades in over every player’s screen for a few seconds: “Three days later”, “Meanwhile, in the Nexus”, a new chapter.')),
+    actions: [{ label: 'Cancel' }, { label: 'Show to players', kind: 'primary', run: () => showTitleCard({ ...d }) }] });
 }
 
 // ======================================================================= scenes
@@ -727,13 +942,45 @@ async function setBackground(sc, file, squaresAcross = 0, quiet = false) {
   const url = await assets.url(id);
   const dims = await new Promise(res => { const i = new Image(); i.onload = () => res({ w: i.naturalWidth, h: i.naturalHeight }); i.onerror = () => res(null); i.src = url; });
   if (!dims) { toast('That image could not be read', 'bad'); return; }
+  if (!squaresAcross && sc.squares) squaresAcross = sc.squares[0];
+  // A map from elsewhere with its own printed grid: find it.
+  const found = !squaresAcross && !sc._gridSet && sc.kind === 'map' ? await findGrid(url) : null;
   change(() => {
     sc.bg = id; sc.width = dims.w; sc.height = dims.h;
-    if (!squaresAcross && sc.squares) squaresAcross = sc.squares[0];
     if (squaresAcross) { sc.grid.size = dims.w / squaresAcross; sc.grid.ox = 0; sc.grid.oy = 0; }
+    else if (found) { Object.assign(sc.grid, { size: found.size, ox: found.ox, oy: found.oy }); }
     else if (!sc._gridSet) sc.grid.size = Math.max(40, Math.round(dims.w / 30));
   }, { rail: true });
-  if (!quiet) toast('Background set', 'ok');
+  if (found && !quiet) toast(`Found the map’s grid: ${found.cols} × ${found.rows} squares. Check it in the Scene tab.`, 'ok');
+  else if (!quiet) toast('Background set', 'ok');
+}
+
+async function findGrid(url) {
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    return detectGrid(img);
+  } catch { return null; }
+}
+
+// Draw a box over a known number of squares; the grid snaps to it.
+function onGridBox(box) {
+  const sc = scene(); if (!sc) return;
+  const g = { ...guessCount(box, sc.grid.size) };
+  const across = el('input', { type: 'number', min: 1, value: g.across, style: { width: '64px' } });
+  const down = el('input', { type: 'number', min: 1, value: g.down, style: { width: '64px' } });
+  const apply = () => {
+    const fit = gridFromBox(box, Math.max(1, +across.value || 1), Math.max(1, +down.value || 1));
+    change(() => { Object.assign(sc.grid, fit); sc._gridSet = true; });
+    closePopover(); setTool('select');
+    toast(`Grid set: ${(sc.width / fit.size).toFixed(1)} × ${(sc.height / fit.size).toFixed(1)} squares`, 'ok');
+  };
+  const r = $('#map').getBoundingClientRect();
+  popover(r.left + r.width / 2 - 120, r.top + 80, el('div', { class: 'stack', style: { gap: '8px' } },
+    el('b', {}, 'How many squares is that box?'),
+    el('div', { class: 'row' }, across, el('span', {}, 'across ×'), down, el('span', {}, 'down')),
+    el('p', { class: 'small muted', style: { margin: 0 } }, 'Draw it edge to edge over whole squares. The bigger the box, the truer the grid.'),
+    el('div', { class: 'row' }, el('button', { class: 'btn small primary', type: 'button', onclick: apply }, 'Set the grid'), el('button', { class: 'btn small', type: 'button', onclick: () => closePopover() }, 'Cancel'))));
+  across.focus(); across.select();
 }
 
 async function dropFiles(files, wx, wy) {
@@ -741,6 +988,8 @@ async function dropFiles(files, wx, wy) {
   for (const f of files) {
     if (f.type.startsWith('audio/')) { await addTracks([f]); continue; }
     if (/\.zip$/i.test(f.name) || /zip/.test(f.type)) { await importZip(kitCtx(), f); continue; }
+    if (/\.html?$/i.test(f.name) || f.type === 'text/html') { await loadPrepFile(f, { loadPack }); continue; }
+    if (/\.json$/i.test(f.name)) { try { const pk = JSON.parse(await f.text()); if (pk.format === 'erta-table-pack') { loadPack(pk); continue; } } catch {} toast('That .json isn’t a session pack', 'bad'); continue; }
     if (!f.type.startsWith('image/')) continue;
     if (!sc) { toast('Make a scene first', 'bad'); return; }
     if (!sc.bg) { await setBackground(sc, f); continue; }
@@ -818,7 +1067,7 @@ function loadPack(pk) {
   let res;
   try { change(c => { res = importPack(c, pk); c.sessionClocks ||= {}; for (const k of c.clocks) if (!(k.id in c.sessionClocks)) c.sessionClocks[k.id] = k.value; }, { rail: true }); }
   catch (e) { toast(e.message, 'bad'); return; }
-  S.tab = 'prep'; S.prepSection = null; renderTabs(); renderPanel(true);
+  S.tab = 'prep'; S.prepSection = null; renderTabs(); renderPanel(true); renderDrawer();
   toast(res.fresh ? `Loaded “${pk.title}”: ${res.added} scenes ready for images` : `Updated “${pk.title}”${res.added ? `, ${res.added} new scenes` : ''}`, 'ok');
 }
 
@@ -829,8 +1078,8 @@ async function attachTrack(t, f) {
   toast(`Attached to “${t.name}”`, 'ok');
 }
 
-function placeEncounter(pack, enc, gi) {
-  const target = S.camp.scenes.find(x => x.packRef?.pack === pack.id && x.packRef.key === enc.scene) || scene();
+function placeEncounter(pack, enc, gi, here = false) {
+  const target = (!here && S.camp.scenes.find(x => x.packRef?.pack === pack.id && x.packRef.key === enc.scene)) || scene();
   if (!target) { toast('Make a scene first', 'bad'); return; }
   if (target.id !== S.viewId) viewScene(target.id);
   const g = target.grid;
@@ -855,6 +1104,7 @@ function renderPanel(force = false) {
   const fn = { prep: panePrep, scene: paneScene, tokens: paneTokens, combat: paneCombat, party: paneParty, audio: paneAudio, handouts: paneHandouts, settings: paneSettings }[S.tab];
   pane.append(fn());
   pane.scrollTop = top;
+  if (S.tab === 'prep') renderDrawer();
 }
 
 function num(v, onCommit, attrs = {}) {
@@ -874,9 +1124,9 @@ function paneScene() {
   if (!sc) return el('div', { class: 'stack' }, el('h3', {}, 'No scene'), el('button', { class: 'btn primary', type: 'button', onclick: newSceneDialog }, 'New scene'));
   const g = sc.grid;
   const lib = S.camp.audio.library;
-  const trackSel = (kind) => {
-    const s = el('select', {}, el('option', { value: '' }, '— none —'), lib.filter(t => t.kind === kind || sc[kind] === t.id).map(t => el('option', { value: t.id, selected: sc[kind] === t.id }, t.name + (t.asset ? '' : ' (no file yet)'))));
-    s.addEventListener('change', () => change(() => { sc[kind] = s.value || null; }));
+  const trackSel = (kind, field = kind) => {
+    const s = el('select', {}, el('option', { value: '' }, field === 'combatMusic' ? '— your default —' : '— none —'), lib.filter(t => t.kind === kind || sc[field] === t.id).map(t => el('option', { value: t.id, selected: sc[field] === t.id }, t.name + (t.asset ? '' : ' (no file yet)'))));
+    s.addEventListener('change', () => change(() => { sc[field] = s.value || null; }));
     return s;
   };
   const squares = el('input', { type: 'number', min: 1, step: 'any', value: +(sc.width / g.size).toFixed(2) });
@@ -886,6 +1136,7 @@ function paneScene() {
     sc.id === S.camp.activeSceneId
       ? el('span', { class: 'chip', style: { color: 'var(--jade)', borderColor: 'var(--jade-line)', justifySelf: 'start' } }, '● Live for players')
       : el('button', { class: 'btn primary', type: 'button', onclick: () => activate(sc.id) }, 'Show this scene to players'),
+    el('div', { class: 'row' }, el('button', { class: 'btn small', type: 'button', title: 'A cinematic card over the players’ screens', onclick: () => titleCardDialog(sc) }, 'Title card…')),
     el('label', { class: 'field' }, el('span', {}, 'Name'), txt(sc.name, v => change(() => { sc.name = v || 'Scene'; }, { rail: true }))),
     el('label', { class: 'field' }, el('span', {}, 'Kind'), (() => {
       const s = el('select', {}, el('option', { value: 'map', selected: sc.kind === 'map' }, 'Battle map'), el('option', { value: 'art', selected: sc.kind === 'art' }, 'Scene art'));
@@ -905,6 +1156,14 @@ function paneScene() {
       el('div', { class: 'grid2' },
         el('label', { class: 'field' }, el('span', {}, 'Nudge X (px)'), num(+g.ox.toFixed(1), v => change(() => { g.ox = v || 0; }), { step: 'any' })),
         el('label', { class: 'field' }, el('span', {}, 'Nudge Y (px)'), num(+g.oy.toFixed(1), v => change(() => { g.oy = v || 0; }), { step: 'any' }))),
+      sc.bg ? el('div', { class: 'row' },
+        el('button', { class: 'btn small', type: 'button', title: 'Look for a grid printed on the map', onclick: async () => {
+          const f = await findGrid(await assets.url(sc.bg));
+          if (!f) { toast('No printed grid found. Draw a box over some squares instead.', 'bad'); return; }
+          change(() => { Object.assign(sc.grid, { size: f.size, ox: f.ox, oy: f.oy }); sc._gridSet = true; }); toast(`Found ${f.cols} × ${f.rows} squares`, 'ok');
+        } }, 'Find the grid'),
+        el('button', { class: 'btn small', type: 'button', title: 'Drag a box over a few whole squares, then say how many', onclick: () => { setTool('grid'); toast('Drag a box over a few whole squares on the map'); } }, 'Align by drawing…'),
+        sc.squares ? el('button', { class: 'btn small ghost', type: 'button', title: 'Use the prep’s square count', onclick: () => change(() => { g.size = sc.width / sc.squares[0]; g.ox = 0; g.oy = 0; sc._gridSet = true; }) }, `Prep: ${sc.squares[0]} × ${sc.squares[1]}`) : null) : null,
       el('div', { class: 'row' },
         el('label', { class: 'check' }, (() => { const c = el('input', { type: 'checkbox', checked: g.show }); c.addEventListener('change', () => change(() => { g.show = c.checked; })); return c; })(), 'Show grid'),
         (() => { const c = el('input', { type: 'color', value: g.color }); c.addEventListener('change', () => change(() => { g.color = c.value; })); return c; })(),
@@ -922,6 +1181,7 @@ function paneScene() {
     el('div', { class: 'grid2' },
       el('label', { class: 'field' }, el('span', {}, 'Music'), trackSel('music')),
       el('label', { class: 'field' }, el('span', {}, 'Ambience'), trackSel('ambience'))),
+    sc.kind === 'map' ? el('label', { class: 'field' }, el('span', {}, 'Combat music (plays when initiative starts)'), trackSel('music', 'combatMusic')) : null,
     el('h4', {}, 'DM notes'),
     (() => { const t = el('textarea', { rows: 5, placeholder: 'Private to you.' }); t.value = sc.notes || ''; t.addEventListener('change', () => change(() => { sc.notes = t.value; }, { panel: false })); return t; })(),
     el('div', { class: 'sep' }),
@@ -1002,6 +1262,11 @@ function tokenEditor(sc, t) {
   return box;
 }
 
+function skinSelect(cur, onPick) {
+  const s = el('select', {}, Object.entries(DICE_SKINS).map(([k, v]) => el('option', { value: k, selected: (cur || 'classic') === k }, v.name)));
+  s.addEventListener('change', () => onPick(s.value === 'classic' ? null : s.value));
+  return s;
+}
 function lightSelect(cur, onPick) {
   const sel = el('select', { 'aria-label': 'Light' }, el('option', { value: '' }, 'No light'), Object.entries(LIGHTS).map(([k, L]) => el('option', { value: k, selected: cur?.kind === k }, `${L.name} (${L.bright} ft bright, +${L.dim} dim)`)));
   sel.addEventListener('change', () => { const L = LIGHTS[sel.value]; onPick(L ? { kind: sel.value, bright: L.bright, dim: L.dim } : null); });
@@ -1067,6 +1332,7 @@ function startCombat(which) {
   const tokens = which === 'selected' ? sc.tokens.filter(t => S.selection.includes(t.id)) : sc.tokens;
   if (!tokens.length) { toast(which === 'selected' ? 'Select tokens on the map first (Shift-click for several)' : 'No tokens on this scene', 'bad'); return; }
   change(c => { c.combat = newCombat(tokens.map(t => tokenCombatant(sc, t))); c.combat.sceneId = sc.id; c.combat.startedAt = Date.now(); });
+  combatMusicOn(sc);
   const foes = tokens.filter(t => !t.charId && t.disposition !== 'friendly').map(t => t.name.replace(/\s+\d+$/, ''));
   journal('combat-start', `A fight began on ${sc.name}`, { scene: sc.name, foes: countNames(foes), pack: S.camp.activePack || null });
 }
@@ -1077,6 +1343,7 @@ function endCombat() {
   const down = c.list.filter(x => !x.charId).filter(x => { const t = sc?.tokens.find(t => t.id === x.tokenId); return x.defeated || (t && t.hp?.value <= 0); }).map(x => x.name.replace(/\s+\d+$/, ''));
   journal('combat-end', `The fight ended after ${c.started ? c.round : 0} round${c.round === 1 ? '' : 's'}`, { rounds: c.started ? c.round : 0, defeated: countNames(down), scene: sc?.name || '' });
   change(cc => { cc.combat = null; });
+  combatMusicOff();
 }
 
 function rollNpcInit(all = false) {
@@ -1187,7 +1454,40 @@ async function afterMove(sc, t, from) {
 function playerLink(ch) {
   const base = location.origin + location.pathname.replace(/[^/]*$/, '');
   const peer = new URLSearchParams(location.search).get('peer');
-  return `${base}play.html${peer ? '?peer=' + peer : ''}#h=${S.camp.hostId}&k=${ch.key}`;
+  const r = encodeRelay(S.camp.settings.relay);
+  return `${base}play.html${peer ? '?peer=' + peer : ''}#h=${S.camp.hostId}&k=${ch.key}${r ? '&r=' + r : ''}`;
+}
+
+function routeLabel(charId) {
+  const c = [...(S.host?.clients.values() || [])].find(x => x.info.charId === charId);
+  const n = c?.net;
+  if (!n) return 'here';
+  return `here · ${n.route === 'relay' ? 'via relay' : 'direct'}${n.rtt != null ? ` · ${n.rtt} ms` : ''}`;
+}
+
+function relayBox() {
+  const st = S.camp.settings;
+  const r = { urls: [], username: '', credential: '', force: false, ...(st.relay || {}) };
+  const urls = el('textarea', { rows: 2, placeholder: 'turn:relay.example.com:443?transport=tcp' }); urls.value = (r.urls || []).join('\n');
+  const user = el('input', { type: 'text', value: r.username || '', autocomplete: 'off' });
+  const pass = el('input', { type: 'password', value: r.credential || '', autocomplete: 'new-password' });
+  const force = el('input', { type: 'checkbox', checked: !!r.force });
+  const out = el('div', { class: 'small muted' });
+  const read = () => ({ urls: urls.value.split(/[\s,]+/).map(x => x.trim()).filter(x => /^turns?:/.test(x)), username: user.value.trim(), credential: pass.value, force: force.checked });
+  return el('div', { class: 'stack' },
+    el('p', { class: 'small muted', style: { margin: 0 } }, 'Most players connect straight to your browser. A school, office or hotel network can block that; a TURN relay carries the connection for them instead. Free and paid relays exist (Metered, Cloudflare, Twilio); paste its address and login here. Player links then carry it, so send the links again after you change it.'),
+    el('label', { class: 'field' }, el('span', {}, 'Relay address (TURN), one per line'), urls),
+    el('div', { class: 'grid2' }, el('label', { class: 'field' }, el('span', {}, 'User name'), user), el('label', { class: 'field' }, el('span', {}, 'Password'), pass)),
+    el('label', { class: 'check' }, force, 'Always go through the relay (for testing, or if direct routes keep failing)'),
+    el('div', { class: 'row' },
+      el('button', { class: 'btn small primary', type: 'button', onclick: () => {
+        const v = read();
+        change(() => { st.relay = v.urls.length ? v : null; });
+        startHost();
+        toast(v.urls.length ? 'Relay saved. Players reconnect on their own; send new links to anyone who hasn’t opened theirs.' : 'Relay removed', 'ok');
+      } }, 'Save'),
+      el('button', { class: 'btn small', type: 'button', onclick: async () => { out.textContent = 'Testing…'; const t = await testRelay(read()); out.textContent = t.ok ? `✓ The relay answered in ${t.ms} ms.` : '✗ ' + t.why; } }, 'Test the relay')),
+    out);
 }
 
 function paneParty() {
@@ -1207,7 +1507,7 @@ function paneParty() {
     const av = avatar(ch.name, ch.color, null);
     if (ch.img) assets.url(ch.img).then(u => { if (u) { av.style.background = `url("${u}") center/cover`; av.textContent = ''; } });
     const head = el('div', { class: 'row', draggable: 'true' }, av, el('div', { class: 'grow' }, el('div', { style: { fontFamily: 'var(--display)', fontSize: '20px', lineHeight: 1.1 } }, ch.name), el('div', { class: 'small muted' }, (ch.player || 'No player set'))),
-      el('span', { class: 'status' }, el('span', { class: 'dot ' + (online.has(ch.id) ? 'on' : '') }), el('span', { class: 'small muted' }, online.has(ch.id) ? 'here' : 'away')));
+      el('span', { class: 'status' }, el('span', { class: 'dot ' + (online.has(ch.id) ? 'on' : '') }), el('span', { class: 'small muted', title: 'How their connection travels: direct, or through your relay' }, online.has(ch.id) ? routeLabel(ch.id) : 'away')));
     head.addEventListener('dragstart', e => { e.dataTransfer.setData('text/erta-token', ch.id); e.dataTransfer.effectAllowed = 'copy'; });
     head.style.cursor = 'grab';
     const color = el('input', { type: 'color', value: ch.color }); color.addEventListener('change', () => change(() => { ch.color = color.value; }));
@@ -1224,6 +1524,7 @@ function paneParty() {
         el('div', { class: 'grid3' }, el('label', { class: 'field' }, el('span', {}, 'Initiative bonus'), num(ch.init || 0, v => change(() => { ch.init = v || 0; for (const x of S.camp.combat?.list || []) if (x.charId === ch.id) x.bonus = v || 0; })))),
         el('div', { class: 'row' }, color, el('button', { class: 'btn small', type: 'button', onclick: async () => { const [f] = await pickFiles({ accept: 'image/*' }); if (f) { const id = await assets.put(f, f.name); change(() => { ch.img = id; }); } } }, 'Token image…')),
         el('label', { class: 'field' }, el('span', {}, 'Carries a light (the player can change this too)'), lightSelect(ch.light, l => change(() => { ch.light = l; }))),
+        el('label', { class: 'field' }, el('span', {}, 'Dice (the player can change this too)'), skinSelect(ch.dice, v => change(() => { ch.dice = v; }))),
         hpConditionsEditor(data, patch => change(() => Object.assign(ch, patch), { panel: false })),
         el('div', { class: 'row' },
           el('button', { class: 'btn small', type: 'button', onclick: async () => { if (await confirmBox('New link?', `${ch.name}'s old link will stop working. Send ${ch.player || 'the player'} the new one.`, { ok: 'Make new link' })) { S.host.kick(ch.id); change(() => { ch.key = uid(8); }); } } }, 'New link'),
@@ -1331,8 +1632,19 @@ function paneAudio() {
       return r;
     })()))));
   wrap.append(vols);
-  const sfx = a.library.filter(t => t.kind === 'sfx');
-  if (sfx.length) wrap.append(el('h4', {}, 'Sound effects'), el('div', { class: 'sfx-board' }, sfx.map(t => el('button', { class: 'btn', type: 'button', onclick: () => playTrack(t) }, t.name))));
+  // Sound board
+  const pads = boardPads();
+  wrap.append(el('div', { class: 'row', style: { marginTop: '4px' } }, el('h4', { class: 'grow', style: { margin: 0 } }, 'Sound board'),
+      el('button', { class: 'btn small ghost', type: 'button', title: 'Choose which built-in sounds show', onclick: () => synthPicker() }, 'Built-ins…')),
+    el('div', { class: 'sfx-board' }, pads.map((p, i) => el('button', { class: 'pad' + (p.synth ? ' syn' : ''), type: 'button', title: (i < 10 ? `Key ${(i + 1) % 10} · ` : '') + 'Plays for everyone', onclick: () => p.play() }, i < 10 ? el('kbd', {}, String((i + 1) % 10)) : null, p.name))),
+    el('p', { class: 'small muted' }, 'Built-in sounds are made on the spot in each browser, so they need no files. Effects you add to the library show here first. Number keys 1–9 and 0 play the first ten.'));
+  // Combat music
+  const cm = el('select', {}, el('option', { value: '' }, '— none —'), a.library.filter(t => t.kind === 'music').map(t => el('option', { value: t.id, selected: a.combatDefault === t.id }, t.name + (t.asset ? '' : ' (no file yet)'))));
+  cm.addEventListener('change', () => change(c => { c.audio.combatDefault = cm.value || null; }));
+  wrap.append(el('h4', {}, 'Combat music'),
+    el('label', { class: 'check' }, (() => { const x = el('input', { type: 'checkbox', checked: S.camp.settings.combatMusic !== false }); x.addEventListener('change', () => change(c => { c.settings.combatMusic = x.checked; })); return x; })(), 'Switch to combat music when initiative starts, and back when the fight ends'),
+    el('label', { class: 'field' }, el('span', {}, 'Default combat music (for scenes without their own)'), cm),
+    el('p', { class: 'small muted' }, 'Battle maps from a session pack use their prep’s “Combat loop” track. Set others in each scene’s Scene tab.'));
   wrap.append(el('div', { class: 'row', style: { marginTop: '6px' } }, el('h4', { class: 'grow', style: { margin: 0 } }, 'Library'),
     el('button', { class: 'btn small', type: 'button', onclick: async () => addTracks(await pickFiles({ accept: 'audio/*', multiple: true })) }, '+ Add audio files')));
   for (const kind of ['music', 'ambience', 'sfx']) {
@@ -1353,6 +1665,14 @@ function paneAudio() {
   }
   if (!a.library.length) wrap.append(el('p', { class: 'small muted' }, 'Add your Suno tracks and ambience loops here (or drop audio files on the map). Music and ambience loop and crossfade; effects play once.'));
   return wrap;
+}
+function synthPicker() {
+  const hide = new Set(S.camp.audio.hiddenSynths || []);
+  const body = el('div', { class: 'stack' }, el('p', { class: 'small muted' }, 'Tick the built-in sounds to show on the board. Try one with ▶ (only you hear it here).'),
+    el('div', { class: 'grid2' }, SYNTHS.map(([k, n]) => el('div', { class: 'row', style: { gap: '6px' } },
+      el('label', { class: 'check grow' }, (() => { const x = el('input', { type: 'checkbox', checked: !hide.has(k) }); x.addEventListener('change', () => { if (x.checked) hide.delete(k); else hide.add(k); }); return x; })(), n),
+      el('button', { class: 'btn icon ghost small', type: 'button', title: 'Preview', html: ICONS.play, onclick: () => S.audio?.synth(k) })))));
+  modal({ title: 'Built-in sounds', body, actions: [{ label: 'Done', kind: 'primary', run: () => { change(c => { c.audio.hiddenSynths = [...hide]; }); } }] });
 }
 const fmtDur = s => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
 
@@ -1415,10 +1735,20 @@ function paneSettings() {
     el('label', { class: 'check' }, (() => { const x = el('input', { type: 'checkbox', checked: st.reactPrompts !== false }); x.addEventListener('change', () => change(() => { st.reactPrompts = x.checked; })); return x; })(), 'Ask about reactions and rerolls (Shield, Counterspell, Bardic Inspiration, Legendary Resistance…)'),
     el('label', { class: 'field' }, el('span', {}, 'Seconds to answer before the table moves on'), num(st.reactTimeout || 30, v => change(() => { st.reactTimeout = Math.max(5, Math.min(120, v || 30)); }), { min: 5, max: 120 })),
     el('label', { class: 'check' }, (() => { const x = el('input', { type: 'checkbox', checked: !!st.creatureCover }); x.addEventListener('change', () => change(() => { st.creatureCover = x.checked; })); return x; })(), 'Creatures in the way give half cover (walls always count)'),
+    el('h4', {}, 'Spectacle'),
+    el('label', { class: 'field' }, el('span', {}, 'Your dice'), skinSelect(st.dmDice, v => change(() => { st.dmDice = v; }))),
+    el('label', { class: 'check' }, (() => { const x = el('input', { type: 'checkbox', checked: S.dice?.enabled !== false }); x.addEventListener('change', () => S.dice?.setEnabled(x.checked)); return x; })(), '3D dice on this screen'),
+    el('label', { class: 'check' }, (() => { const x = el('input', { type: 'checkbox', checked: S.dice?.flourishes !== false }); x.addEventListener('change', () => S.dice?.setFlourishes(x.checked)); return x; })(), 'Natural 20s and 1s get a flourish on this screen'),
+    el('label', { class: 'check' }, (() => { const x = el('input', { type: 'checkbox', checked: st.areaFx !== false }); x.addEventListener('change', () => change(() => { st.areaFx = x.checked; })); return x; })(), 'Animate areas (Fireball, Thunderwave, Cloudkill…) for everyone'),
+    el('label', { class: 'check' }, (() => { const x = el('input', { type: 'checkbox', checked: st.titleCards !== false }); x.addEventListener('change', () => change(() => { st.titleCards = x.checked; })); return x; })(), 'Show a title card when you move players to a new scene'),
     el('h4', {}, 'Keyboard'),
-    el('p', { class: 'small muted' }, 'V select · R ruler · P ping · C sphere · O cone · L line · B cube · F reveal · H hide · W walls · D doors · I lights · T target · N next turn · Delete removes · arrows nudge · Esc clears. Hold on empty map to ping; Shift+ping pulls every player’s view.'),
+    el('p', { class: 'small muted' }, 'V select · R ruler · P ping · C sphere · O cone · L line · B cube · F reveal · H hide · W walls · D doors · I lights · T target · N next turn · E who’s here · 1–9, 0 sound board · Delete removes · arrows nudge · Esc clears. Hold on empty map to ping; Shift+ping pulls every player’s view.'),
     el('h4', {}, 'Backups'),
-    el('div', { class: 'row' }, el('button', { class: 'btn', type: 'button', onclick: exportBackup }, 'Back up this campaign'), el('button', { class: 'btn', type: 'button', onclick: importBackup }, 'Restore a backup…')),
+    backupsBox(),
+    el('h4', {}, 'Second screen and spectators'),
+    screensBox(),
+    el('h4', {}, 'Connections'),
+    relayBox(),
     el('h4', {}, 'Danger'),
     el('button', { class: 'btn danger', type: 'button', onclick: async () => {
       if (!(await confirmBox('Delete campaign?', `“${S.camp.name}” will be deleted from this browser. Back it up first if you might want it again.`, { ok: 'Delete campaign', danger: true }))) return;
@@ -1431,36 +1761,115 @@ function paneSettings() {
 
 async function exportBackup() {
   const c = S.camp; save.flush();
-  const zip = new window.JSZip();
-  zip.file('campaign.json', JSON.stringify(c));
-  const ids = new Set();
-  for (const s of c.scenes) { if (s.bg) ids.add(s.bg); for (const t of s.tokens) if (t.img) ids.add(t.img); }
-  for (const ch of c.characters) if (ch.img) ids.add(ch.img);
-  for (const t of c.audio.library) ids.add(t.asset);
-  for (const h of c.handouts || []) if (h.img) ids.add(h.img);
-  const meta = [];
-  for (const id of ids) { const a = await assets.get(id); if (!a) continue; zip.file('assets/' + id, a.blob); meta.push({ id, name: a.name, type: a.type }); }
-  zip.file('assets.json', JSON.stringify(meta));
   toast('Packing backup…');
-  const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
-  downloadBlob(blob, `${c.name.replace(/[^\w-]+/g, '-')}-${new Date().toISOString().slice(0, 10)}.ertatable`);
+  downloadBlob(await backup.buildZip(c), backup.fileName(c));
+  autoBackup('Downloaded', true);
 }
 
 async function importBackup() {
   const [f] = await pickFiles({ accept: '.ertatable,.zip' });
   if (!f) return;
+  let c;
+  try { c = await backup.readZip(f); } catch (e) { console.error(e); toast('That file isn’t an Erta Table backup', 'bad'); return; }
+  await restoreCampaign(c, 'the backup');
+}
+
+// Put a campaign back (from a file, a snapshot or a folder), keeping a snapshot of what it replaces.
+async function restoreCampaign(c, from) {
+  const existing = await campaigns.get(c.id);
+  if (existing) {
+    const when = new Date(c.updated || Date.now()).toLocaleString();
+    if (!(await confirmBox('Replace campaign?', `Replace “${existing.name}” with ${from} from ${when}? A snapshot of how it is now is kept, so you can undo this from Settings → Backups.`, { ok: 'Replace', danger: true }))) return false;
+    await backup.snapshot(existing, 'Before restore');
+  }
+  await campaigns.put(c);
+  toast(`Restored “${c.name}”`, 'ok');
+  if (S.camp) { S.host?.destroy(); S.camp = null; }
+  openCampaign(c.id);
+  return true;
+}
+
+// ---------------------------------------------------------------- automatic backups
+// A snapshot in this browser every ten minutes of play (and on open, wrap-up and leaving),
+// plus a copy in the backup folder when one is set and allowed.
+const AUTO_EVERY = 10 * 60 * 1000;
+async function autoBackup(label = '', force = false) {
+  const c = S.camp; if (!c || S.backupBusy) return;
+  if (!force && c.updated <= (S.lastSnapAt || 0)) return;
+  S.backupBusy = true;
   try {
-    const zip = await window.JSZip.loadAsync(f);
-    const c = JSON.parse(await zip.file('campaign.json').async('string'));
-    const meta = JSON.parse(await zip.file('assets.json').async('string'));
-    for (const m of meta) { const buf = await zip.file('assets/' + m.id)?.async('arraybuffer'); if (buf) await assets.putRaw(m.id, m.type, m.name, buf); }
-    const existing = await campaigns.get(c.id);
-    if (existing && !(await confirmBox('Replace campaign?', `“${existing.name}” already exists here. Replace it with the backup?`, { ok: 'Replace', danger: true }))) return;
-    await campaigns.put(c);
-    toast(`Restored “${c.name}”`, 'ok');
-    if (S.camp) { S.host?.destroy(); }
-    openCampaign(c.id);
-  } catch (e) { console.error(e); toast('That file isn’t an Erta Table backup', 'bad'); }
+    save.flush();
+    await backup.snapshot(c, label);
+    S.lastSnapAt = Date.now();
+    if (await backup.folderState() === 'granted') { try { await backup.backupToFolder(c, { label }); S.folderAt = Date.now(); S.folderErr = null; } catch (e) { S.folderErr = e.message; } }
+  } catch (e) { console.warn('auto backup failed', e); }
+  S.backupBusy = false;
+  renderBackupChip();
+  if (S.tab === 'settings') renderPanel();
+}
+setInterval(() => { if (S.camp && Date.now() - (S.lastSnapAt || 0) >= AUTO_EVERY) autoBackup(); }, 60 * 1000);
+document.addEventListener('visibilitychange', () => { if (document.hidden && S.camp && Date.now() - (S.lastSnapAt || 0) > 60 * 1000) autoBackup(); });
+
+async function renderBackupChip() {
+  const b = $('#backup-chip'); if (!b || !S.camp) return;
+  const st = await backup.folderState();
+  b.hidden = st !== 'prompt';
+}
+
+function ago(ts) {
+  if (!ts) return 'never';
+  const m = Math.round((Date.now() - ts) / 60000);
+  return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 60 * 24 ? `${Math.round(m / 60)} h ago` : new Date(ts).toLocaleDateString();
+}
+
+function backupsBox() {
+  const box = el('div', { class: 'stack' });
+  (async () => {
+    const snaps = await backup.listSnapshots(S.camp.id);
+    const st = await backup.folderState();
+    const h = await backup.folderHandle();
+    const last = await kv.get('backup-last:' + S.camp.id);
+    box.append(
+      el('div', { class: 'row' }, el('button', { class: 'btn', type: 'button', onclick: exportBackup }, 'Download a backup (.ertatable)'), el('button', { class: 'btn', type: 'button', onclick: importBackup }, 'Restore a backup file…')),
+      el('div', { class: 'lbl', style: { marginTop: '6px' } }, 'Snapshots in this browser'),
+      el('p', { class: 'small muted', style: { margin: 0 } }, `Taken every 10 minutes while you play, when you open the campaign and when you wrap up. The last ${24} are kept, plus named ones.`),
+      snaps.length ? el('div', { class: 'snap-list' }, snaps.slice(0, 40).map(x => el('div', { class: 'snap' },
+        el('span', { class: 'grow' }, new Date(x.ts).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })),
+        x.label ? el('span', { class: 'chip' }, x.label) : null,
+        el('span', { class: 'small muted' }, fmtBytes(x.size)),
+        el('button', { class: 'btn small', type: 'button', onclick: async () => { const c = await backup.loadSnapshot(S.camp.id, x.ts); if (c) restoreCampaign(c, 'the snapshot'); else toast('That snapshot couldn’t be read', 'bad'); } }, 'Restore')))) : el('p', { class: 'small muted' }, 'None yet.'),
+      el('div', { class: 'row' }, el('button', { class: 'btn small', type: 'button', onclick: async () => { await autoBackup('Saved by hand', true); toast('Snapshot taken', 'ok'); } }, 'Take a snapshot now')),
+      el('div', { class: 'lbl', style: { marginTop: '6px' } }, 'Backup folder on this computer'),
+      st === 'unsupported' ? el('p', { class: 'small muted' }, 'This browser can’t write to a folder. Chrome and Edge can; here, download a backup now and then.')
+        : el('div', { class: 'stack', style: { gap: '6px' } },
+          el('p', { class: 'small muted', style: { margin: 0 } }, st === 'none' ? 'Pick a folder (one that syncs, like Google Drive or OneDrive, is ideal). Every snapshot also lands there: pictures and tracks once, the campaign as a dated file.'
+            : st === 'granted' ? `Saving to “${h?.name}” · last copy ${ago(last)}${S.folderErr ? ' · ' + S.folderErr : ''}.` : `Saving to “${h?.name}” is paused until you allow it again.`),
+          el('div', { class: 'row' },
+            st === 'prompt' || st === 'denied' ? el('button', { class: 'btn small primary', type: 'button', onclick: async () => { if (await backup.resumeFolder()) { await autoBackup('', true); renderPanel(); } } }, 'Allow and back up now') : null,
+            st === 'granted' ? el('button', { class: 'btn small', type: 'button', onclick: async () => { try { const r = await backup.backupToFolder(S.camp); await kv.set('backup-last:' + S.camp.id, Date.now()); toast(`Backed up to “${h.name}/${r.dir}”${r.added ? `, ${r.added} new file${r.added === 1 ? '' : 's'}` : ''}`, 'ok'); renderPanel(); } catch (e) { toast(e.message, 'bad'); } } }, 'Back up now') : null,
+            el('button', { class: 'btn small', type: 'button', onclick: async () => { try { await backup.chooseFolder(); await autoBackup('', true); renderPanel(); } catch (e) { if (e.name !== 'AbortError') toast(e.message, 'bad'); } } }, st === 'none' ? 'Choose a folder…' : 'Change folder…'),
+            st !== 'none' ? el('button', { class: 'btn small ghost', type: 'button', onclick: async () => { await backup.forgetFolder(); renderPanel(); renderBackupChip(); } }, 'Stop') : null,
+            el('button', { class: 'btn small', type: 'button', onclick: () => restoreFromFolder() }, 'Restore from a folder…'))));
+  })();
+  return box;
+}
+
+async function restoreFromFolder() {
+  if (!backup.folderSupported()) { toast('This browser can’t read folders. Use a backup file instead.', 'bad'); return; }
+  let root;
+  try { root = await window.showDirectoryPicker({ id: 'erta-table-backups', mode: 'read' }); } catch { return; }
+  const cat = await backup.folderCatalog(root);
+  if (!cat.length) { toast('No Erta Table backups in that folder', 'bad'); return; }
+  const body = el('div', { class: 'stack' });
+  for (const cp of cat) {
+    const sel = el('select', {}, cp.files.map(f => el('option', { value: f }, f === 'latest.json' ? 'The latest copy' : f.replace(/\.json$/, ''))));
+    body.append(el('div', { class: 'stack', style: { gap: '4px' } }, el('b', {}, cp.name), el('div', { class: 'row' }, sel,
+      el('button', { class: 'btn small primary', type: 'button', onclick: async () => {
+        try { const r = await backup.readFolderBackup(cp.dir, sel.value); m.close(); if (r.missing) toast(`${r.missing} picture${r.missing === 1 ? ' is' : 's are'} missing from the folder`, 'bad'); await restoreCampaign(r.camp, 'the folder backup'); }
+        catch (e) { toast(e.message, 'bad'); }
+      } }, 'Restore'))));
+  }
+  const m = modal({ title: 'Restore from a folder', body, actions: [{ label: 'Close' }] });
 }
 
 // ======================================================================= boot
@@ -1488,6 +1897,7 @@ function makeEngine() {
     summon: (A, key) => summon(A, key),
     ask: (charId, q) => askChoice(charId, q),
     event: (type, text, data) => journal(type, text, data),
+    fx: (tpl, kind) => areaFx(tpl, kind),
   });
   // resolving a pending save also clears the prompt
   const orig = S.engine.resolvePendingSave.bind(S.engine);
@@ -1807,7 +2217,7 @@ function openWrapUp() {
   save.flush();
   wrapUpDialog({
     camp: S.camp,
-    onSave: entry => { change(c => { (c.wrapups ||= []).push(entry); }); toast('Saved with the campaign', 'ok'); },
+    onSave: entry => { change(c => { (c.wrapups ||= []).push(entry); }); toast('Saved with the campaign', 'ok'); autoBackup('Wrap-up', true); },
     onNewSession: () => { change(c => { c.journalArchive = [...(c.journalArchive || []), ...(c.journal || [])].slice(-6000); c.journal = []; startSession(c); }); toast('A fresh session starts now', 'ok'); },
     download: (blob, name) => downloadBlob(blob, name),
     copy: async t => { if (await copyText(t)) toast('Copied the write-up', 'ok'); },

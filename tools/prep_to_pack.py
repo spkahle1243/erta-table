@@ -2,12 +2,17 @@
 """Turn a session prep page (built from the DM's one-shot / session template)
 into an Erta Table session pack.
 
-    prep_to_pack.py <session.html> <case.config.json> <srd-monsters.json> <out.json>
+    prep_to_pack.py <session.html> <case.config.json | -> <srd-monsters.json> <out.json>
 
 The page supplies the prose (overview, scenes, read-alouds, checks, NPC cards),
 its own styles, and every art / battle-map / soundtrack / portrait prompt and
 handout. The config supplies what the page can't express as data: monster
-reskins, encounters and clocks.
+reskins, encounters and clocks. Pages made from the current templates carry the
+config in a <script type="application/json" id="erta-table"> block; pass "-"
+to use only that block, or a .json file to override parts of it.
+
+The table can do the same in the browser (Prep tab → Load a prep page), via
+js/packbuild.js, which also reads NPC cards for the scene drawer.
 """
 import sys, re, json, copy
 from bs4 import BeautifulSoup, NavigableString
@@ -150,9 +155,12 @@ def add_items_to_pack(pack_path, spells_path, cfg_path=None):
 
 def main(page_path, cfg_path, srd_path, out_path, spells_path='data/srd-spells-2024.json'):
     html = open(page_path, encoding='utf-8').read()
-    cfg = json.load(open(cfg_path, encoding='utf-8'))
     srd = json.load(open(srd_path, encoding='utf-8'))
     soup = BeautifulSoup(html, 'lxml')
+    block = soup.find('script', id='erta-table', attrs={'type': 'application/json'})
+    cfg = json.loads(block.string) if block and block.string else {}
+    if cfg_path and cfg_path != '-': cfg.update(json.load(open(cfg_path, encoding='utf-8')))
+    if 'id' not in cfg: cfg['id'] = slug(soup.select_one('header.mast h1').get_text(strip=True)) if soup.select_one('header.mast h1') else 'session'
 
     css = '\n'.join(s.get_text() for s in soup.find_all('style'))
     for tag in soup.find_all(['script', 'style', 'link', 'title']): tag.decompose()
@@ -246,6 +254,8 @@ def main(page_path, cfg_path, srd_path, out_path, spells_path='data/srd-spells-2
         else:
             first = next((m for m in same if not m['combat'] and not m['cue']), None)
             if first: s['music'] = first['key']
+        loop = next((m for m in same if m['combat']), None)
+        if s['kind'] == 'map' and loop: s['combatMusic'] = loop['key']
     for s in scenes:
         s.update(cfg.get('sceneOverrides', {}).get(s['key'], {}))
 

@@ -4,13 +4,14 @@ A virtual tabletop that runs in the browser, for the **Erta** campaign and the *
 
 - **DM view:** https://spkahle1243.github.io/erta-table/
 - **Players** join from their own character link (DM view → Party tab → copy link). No accounts, nothing to install.
+- **Second screen and spectators:** Settings → *Second screen and spectators* has a link for your tablet (the tracker, clocks, prep, music) and a read-only spectator view for streaming.
 
 ## How it works
 
 Your DM tab *is* the game server, the way your Foundry install is. Players' browsers connect straight to it. A free matchmaking service (PeerJS) introduces the browsers to each other; after that, all game traffic, maps and music go directly between you and your players.
 
 - Keep the DM tab open for the whole session. If it closes or your computer sleeps, players see "Reconnecting…" and rejoin by themselves when you reopen the campaign.
-- Everything (campaigns, maps, music) is saved in this browser on this computer. **Back up** (top bar) downloads one file you can restore anywhere; player links keep working after a restore.
+- Everything (campaigns, maps, music) is saved in this browser on this computer, with a snapshot every ten minutes of play. **Back up** (top bar) downloads one file you can restore anywhere; player links keep working after a restore. See *Backups* below for a backup folder.
 - Maps, tokens and music upload from you to each player the first time they're needed, then stay cached in the player's browser.
 
 ## Game night checklist
@@ -35,8 +36,10 @@ Your DM tab *is* the game server, the way your Foundry install is. Players' brow
 | T | Target (or un-target) the token under the mouse. T over empty map clears your targets |
 | S | Open or close your character sheet (players) |
 | N | Next turn in combat (DM) |
+| E | Who's here: the NPC cards for the scene (DM) |
+| 1–9, 0 | Play the first ten sound board pads (DM) |
 
-Mouse wheel zooms; right-drag pans; right-click a token for HP and conditions. Drop an image on the map to add a token (it starts hidden), or on an empty scene to set its background. Drop audio files to add them to the library.
+Mouse wheel zooms; right-drag pans; right-click a token for HP and conditions. Drop an image on the map to add a token (it starts hidden), or on an empty scene to set its background. Drop audio files to add them to the library, and a prep page (.html) or a pack (.json) to load it.
 
 ## Character sheets and automation
 
@@ -109,6 +112,19 @@ Item cards in your prep (the Copper Beads, Mending Draughts, the blasting charge
 
 Add your notes, then **Download .md** and put the file in your DM Story Assistant project. The next prep picks up its *Previously on…*, ledgers and clocks from it. **Save & start the next session** keeps a copy with the campaign and starts a fresh journal.
 
+## Who's here (NPC drawer)
+
+**Who's here** (top bar, or E) opens the NPC cards for the scene in front of you, straight from the prep: who's on the scene's *Who* line, its NPC cards and the quick reference's walk-ons. Each card shows the portrait (once the Image Kit has made it), the role, Look / Voice / Wants / Hiding and the sample line, with **Stat block**, **Place token** (hidden, mid-view) and **Show portrait**. Switch scenes from its menu, or list everyone in the pack.
+
+## Sound and spectacle
+
+- **Combat music:** when initiative starts, the scene's combat loop takes over (pack battle maps use their prep's *Combat loop* track; set others in the Scene tab, or a default in Audio). When the fight ends, the music that was playing comes back where it was.
+- **Sound board** (Audio tab): sixteen built-in sounds made on the spot in every browser, no files needed (thunder, explosion, sword clash, creaking door, bell, heartbeat, war drums, wind, roar…), plus any effects you add to the library. Keys 1–9 and 0 play the first ten; **Built-ins…** chooses which show.
+- **Dice skins:** each player picks theirs from the volume menu (marble, dragonfire, obsidian, ice, astral sea, oak, bronze…); you set yours in Settings, and anyone's from the Party tab. Everyone sees each roller's dice.
+- **Natural 20s and 1s** get a flourish and a fanfare (or a sad trombone) on every screen.
+- **Areas animate:** a Fireball blooms, Thunderwave rings out, Cloudkill rolls in, each in its damage type's look, for everyone on that scene.
+- **Title cards:** moving players to a new scene puts its name across their screens between letterbox bars (pack scenes add *Scene N* and the time and place). Scene tab → **Title card…** shows your own (“Three days later”). Settings turns any of this off.
+
 ## Image Kit (pictures with Gemini)
 
 Prep tab → **Image Kit…** makes every picture the table needs: token art for each creature and character, battle maps, scene art and NPC portraits.
@@ -119,19 +135,40 @@ Prep tab → **Image Kit…** makes every picture the table needs: token art for
 
 With a Gemini API key you can skip Canvas: **Open the Image Kit** runs it on this site, and **Send to** puts the pictures straight into the open table. The kit itself is `image-kit.html`.
 
+Battle maps come back cropped to the prep's exact squares (a 40 × 16 map is exactly 40 by 16 squares, each a whole number of pixels), so the grid lands on the map with no fiddling.
+
+## Battle map grids
+
+A map from elsewhere with its own printed grid: drop it on the scene and the table finds the grid (square size and offset) by itself. Or, in the Scene tab, **Find the grid** looks again, **Align by drawing…** lets you drag a box over a few whole squares and say how many, and **Prep: W × H** uses the prep's count. The nudge fields are still there for the last pixel.
+
 ## Session packs
 
-`tools/prep_to_pack.py` turns a prep page into a pack: scenes, soundtrack slots, handouts, stat blocks, encounters, clocks and item cards. `python3 tools/prep_to_pack.py --items packs/<pack>.json data/srd-spells-2024.json` re-reads the item cards of a pack that's already built.
+A session page made from the story-arc template loads straight into the table: Prep tab → **Load a session pack…** → **Load a prep page (.html)…**, or drop the .html on the map. Save the page from the Project as an .html file first. The table reads the scenes, prompts, soundtrack slots, handouts, NPC cards and item cards from the page, and the encounters, clocks and monster stat blocks from the page's built-in data block (`<script type="application/json" id="erta-table">`, specified in the template). Pages without the block still load; encounters, clocks and monsters are then read from the page as well as possible, and the table asks you to check them.
+
+`tools/prep_to_pack.py <page.html> - data/srd-monsters-2024.json <out.json>` does the same offline (pass a config .json instead of `-` to override the block). `python3 tools/prep_to_pack.py --items packs/<pack>.json data/srd-spells-2024.json` re-reads the item cards of a pack that's already built.
+
+## Backups
+
+- **Snapshots in this browser:** every ten minutes of play, when you open a campaign, when you wrap up and when you leave. The last 24 are kept, plus named ones. Settings → Backups lists them; **Restore** puts one back (and snapshots what it replaces, so you can undo). A deleted campaign can be brought back from the home screen.
+- **A backup folder** (Chrome and Edge): Settings → Backups → **Choose a folder…** (one that syncs, like Google Drive or OneDrive, is ideal). Every snapshot also lands there: each picture and track once, the campaign as a dated file and `latest.json`. **Restore from a folder…** (here or on the home screen) brings any of them back, on any computer. After a restart the browser asks once before writing again: click **Resume folder backups** in the top bar.
+- **Back up** (top bar) still downloads a single `.ertatable` file.
+
+## Second screen and spectators
+
+Settings → *Second screen and spectators*:
+
+- **Second DM screen:** open its link on a tablet or another monitor. It has the tracker with real HP and AC (tap − / + to damage or heal), **Next turn**, the clocks, the prep for the live scene with your notes and its NPCs, music and the sound board, the party, and the last rolls. It controls the table, so keep the link to yourself.
+- **Spectator view:** a clean, read-only view of what the party sees, with dice, title cards, area effects and music. For OBS, add it as a Browser source with `&auto=1` on the end (skips the start screen); `&log=0` hides the rolls, `&party=0` the party, `&audio=0` the sound. The top bar shows ⧉ and ◉ when these are connected. **Reset these links** retires old ones.
 
 ## Roadmap
 
-- A session pack with every new prep.
 - Opportunity attacks when a creature leaves reach; movement range while dragging.
+- Monsters' own reactions as prompts.
 
 ## If a player can't connect
 
-Most home networks connect fine. A few strict networks (some offices, schools, mobile carriers) block direct browser-to-browser connections. The fix is a relay ("TURN server"); add one to `ICE_SERVERS` in `config.js`.
+Most home networks connect fine. A few strict networks (some offices, schools, hotels, mobile carriers) block direct browser-to-browser connections. The fix is a relay (a "TURN server"): Settings → *Connections*, paste the relay's address, user name and password (free and paid ones exist: Metered, Cloudflare, Twilio), **Test the relay**, then **Save**, and send that player their link again (links carry the relay, so players set nothing up). The Party tab shows how each player is connected: *direct* or *via relay*, with the round trip in milliseconds. You can also add a relay for everyone in `config.js` (`ICE_SERVERS`).
 
 ## Credits
 
-Monster stat blocks and spells: this work includes material from the System Reference Document 5.2 ("SRD 5.2") by Wizards of the Coast LLC, available at https://www.dndbeyond.com/srd and licensed under the Creative Commons Attribution 4.0 International License (https://creativecommons.org/licenses/by/4.0/legalcode). Converted from the data in the [Foundry VTT dnd5e system](https://github.com/foundryvtt/dnd5e). 3D dice: [dice-box-threejs](https://github.com/3d-dice/dice-box-threejs) (MIT). Condition icons: Lorc, Delapouite and contributors, [game-icons.net](https://game-icons.net) (CC BY 3.0). Networking: [PeerJS](https://peerjs.com) (MIT). Backups: [JSZip](https://stuk.github.io/jszip/) (MIT).
+Monster stat blocks and spells: this work includes material from the System Reference Document 5.2 ("SRD 5.2") by Wizards of the Coast LLC, available at https://www.dndbeyond.com/srd and licensed under the Creative Commons Attribution 4.0 International License (https://creativecommons.org/licenses/by/4.0/legalcode). Converted from the data in the [Foundry VTT dnd5e system](https://github.com/foundryvtt/dnd5e). 3D dice and their textures: [dice-box-threejs](https://github.com/3d-dice/dice-box-threejs) (MIT). Condition icons: Lorc, Delapouite and contributors, [game-icons.net](https://game-icons.net) (CC BY 3.0). Networking: [PeerJS](https://peerjs.com) (MIT). Backups: [JSZip](https://stuk.github.io/jszip/) (MIT).

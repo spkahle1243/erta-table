@@ -2,6 +2,8 @@
 // The DM sets what plays and when it started; every browser computes the same
 // playback position from the shared clock, so everyone hears the same moment.
 
+import { playSynth } from './sfx.js';
+
 const FADE = 1.6; // seconds
 
 export class AudioEngine {
@@ -96,6 +98,9 @@ export class AudioEngine {
     node.gain.gain.linearRampToValueAtTime(0, t + FADE);
     setTimeout(() => { node.el.pause(); node.el.removeAttribute('src'); node.el.load(); }, FADE * 1000 + 200);
   }
+
+  // A built-in, synthesized effect (js/sfx.js).
+  synth(key, vol = 1) { if (this.ctx) playSynth(this.ctx, this.bus.sfx, key, vol); }
 
   async sfx(asset, vol = 1) {
     if (!this.ctx) return;

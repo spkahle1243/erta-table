@@ -7,6 +7,7 @@ import { DISPOSITION_COLORS, cellDistance } from './model.js';
 import { clamp } from './util.js';
 import * as geo from './geometry.js';
 import { blockers, visPolygon, pointInPoly, pxPerFt, doorHandle } from './vision.js';
+import { makeFx, drawFx } from './areafx.js';
 
 const CONE_HALF = geo.CONE_HALF;
 const BACKDROP = '#0d1213';
@@ -30,6 +31,7 @@ export class MapView {
     this.remoteRulers = new Map(); // key -> { pts, color, name, t }
     this.remoteDrags = new Map();  // tokenId -> { x, y, t }
     this.pings = [];
+    this.fx = [];
     this.targets = new Map(); // tokenId -> [colors]
     this.placing = null;     // { shape, len, cb } while placing a spell's area
     this.action = null;
@@ -276,6 +278,7 @@ export class MapView {
       this.action = { kind: 'tpl', tpl: { shape, x: o.x, y: o.y, dir: 0, len: P ? P.len : 5, color: this.myColor }, sx: o.x, sy: o.y };
       this.dirty = true; return;
     }
+    if (tool === 'grid') { this.action = { kind: 'gridbox', x0: w.x, y0: w.y, x1: w.x, y1: w.y }; this.dirty = true; return; }
     if (tool.startsWith('fog:')) {
       const [mode, shape] = tool.slice(4).split('-');
       this.action = shape === 'brush' ? { kind: 'fogbrush', m: mode, pts: [w.x, w.y] } : { kind: 'fogrect', m: mode, x0: w.x, y0: w.y, x1: w.x, y1: w.y };
@@ -341,7 +344,7 @@ export class MapView {
       this.dirty = true; return;
     }
     if (a.kind === 'wall') { const p = this.snapWall(w.x, w.y, e.shiftKey || a.free); a.x2 = p.x; a.y2 = p.y; this.dirty = true; return; }
-    if (a.kind === 'fogrect') { a.x1 = w.x; a.y1 = w.y; this.dirty = true; return; }
+    if (a.kind === 'fogrect' || a.kind === 'gridbox') { a.x1 = w.x; a.y1 = w.y; this.dirty = true; return; }
     if (a.kind === 'fogbrush') { a.pts.push(w.x, w.y); this.dirty = true; return; }
   }
 
@@ -375,6 +378,11 @@ export class MapView {
     }
     if (a.kind === 'wall') {
       if (Math.hypot(a.x2 - a.x1, a.y2 - a.y1) >= this.g * 0.2) this.o.onWallAdd?.({ x1: Math.round(a.x1), y1: Math.round(a.y1), x2: Math.round(a.x2), y2: Math.round(a.y2), door: a.door });
+      this.dirty = true; return;
+    }
+    if (a.kind === 'gridbox') {
+      const x = Math.min(a.x0, a.x1), y = Math.min(a.y0, a.y1), w = Math.abs(a.x1 - a.x0), h = Math.abs(a.y1 - a.y0);
+      if (w > 6 && h > 6) this.o.onGridBox?.({ x, y, w, h }, this.toScreen ? this.toScreen(x + w, y + h) : null);
       this.dirty = true; return;
     }
     if (a.kind === 'fogrect') {
@@ -482,7 +490,8 @@ export class MapView {
     this.pings = this.pings.filter(p => now - p.t < 1800);
     for (const [k, r] of this.remoteRulers) if (now - r.t > 8000) this.remoteRulers.delete(k);
     for (const [k, d] of this.remoteDrags) if (now - d.t > 4000) this.remoteDrags.delete(k);
-    if (!this.dirty && !this.pings.length) return;
+    this.fx = this.fx.filter(f => now - f.t0 < f.dur);
+    if (!this.dirty && !this.pings.length && !this.fx.length) return;
     this.dirty = false;
     this._draw();
   }
@@ -519,6 +528,9 @@ export class MapView {
     if (this.action?.kind === 'tpl') this._drawTemplate(c, this.action.tpl, true, true);
     else if (this.placing && this.cursor) { const o = this.snapCorner(this.cursor.x, this.cursor.y); this._drawTemplate(c, { shape: this.placing.shape, x: o.x, y: o.y, dir: 0, len: this.placing.len, color: this.myColor }, true, true); }
 
+    // area animations
+    if (this.fx.length) { const now = performance.now(); for (const f of this.fx) drawFx(c, f, now, (cc, t) => this._tplShape(cc, t)); }
+
     // what the party can see (players always when vision is on; the DM when previewing)
     if (s.vision?.on && s.kind !== 'art' && (this.role !== 'dm' || this.previewVision)) {
       this._updateVision();
@@ -549,6 +561,11 @@ export class MapView {
     if (a?.kind === 'fogrect') {
       c.save(); c.fillStyle = a.m === 'reveal' ? 'rgba(102,195,157,.25)' : 'rgba(229,145,106,.3)';
       c.strokeStyle = a.m === 'reveal' ? '#66C39D' : '#E5916A'; c.lineWidth = 2 / this.cam.z; c.setLineDash([8 / this.cam.z, 6 / this.cam.z]);
+      const x = Math.min(a.x0, a.x1), y = Math.min(a.y0, a.y1);
+      c.fillRect(x, y, Math.abs(a.x1 - a.x0), Math.abs(a.y1 - a.y0)); c.strokeRect(x, y, Math.abs(a.x1 - a.x0), Math.abs(a.y1 - a.y0)); c.restore();
+    }
+    if (a?.kind === 'gridbox') {
+      c.save(); c.fillStyle = 'rgba(147,181,216,.18)'; c.strokeStyle = '#93B5D8'; c.lineWidth = 2 / this.cam.z; c.setLineDash([8 / this.cam.z, 6 / this.cam.z]);
       const x = Math.min(a.x0, a.x1), y = Math.min(a.y0, a.y1);
       c.fillRect(x, y, Math.abs(a.x1 - a.x0), Math.abs(a.y1 - a.y0)); c.strokeRect(x, y, Math.abs(a.x1 - a.x0), Math.abs(a.y1 - a.y0)); c.restore();
     }
@@ -684,6 +701,20 @@ export class MapView {
     for (let x = gr.ox + Math.ceil((x0 - gr.ox) / gr.size) * gr.size; x <= x1; x += gr.size) { c.moveTo(x, y0); c.lineTo(x, y1); }
     for (let y = gr.oy + Math.ceil((y0 - gr.oy) / gr.size) * gr.size; y <= y1; y += gr.size) { c.moveTo(x0, y); c.lineTo(x1, y); }
     c.stroke(); c.restore();
+  }
+
+  // Play an area animation (kind: a damage type, see areafx.js).
+  playFx(tpl, kind) { if (!this.scene) return; this.fx.push(makeFx(tpl, kind, this.tplPx(tpl))); this.dirty = true; }
+  _tplShape(c, t) {
+    const gr = this.scene.grid, L = this.tplPx(t);
+    c.beginPath();
+    if (t.shape === 'circle') c.arc(t.x, t.y, L, 0, Math.PI * 2);
+    else if (t.shape === 'cube') c.rect(t.x, t.y, L, L);
+    else if (t.shape === 'cone') { c.moveTo(t.x, t.y); c.arc(t.x, t.y, L, t.dir - CONE_HALF, t.dir + CONE_HALF); c.closePath(); }
+    else {
+      const W = gr.size * (t.wid || gr.feet) / gr.feet, ux = Math.cos(t.dir), uy = Math.sin(t.dir), px = -uy * W / 2, py = ux * W / 2;
+      c.moveTo(t.x + px, t.y + py); c.lineTo(t.x + px + ux * L, t.y + py + uy * L); c.lineTo(t.x - px + ux * L, t.y - py + uy * L); c.lineTo(t.x - px, t.y - py); c.closePath();
+    }
   }
 
   _drawTemplate(c, t, selected, preview) {

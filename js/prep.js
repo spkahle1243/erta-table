@@ -9,12 +9,14 @@ import { newScene, newToken } from './model.js';
 import { ICONS, modal } from './ui.js';
 import { renderStatBlock } from './statblock.js';
 import { artFor } from './imagekit.js';
+import { buildPack, npcsForPack } from './packbuild.js';
 
 export const actorKey = (packId, key) => `pack:${packId}:${key}`;
 
 // ---------------------------------------------------------------- loading
 export function importPack(c, pack) {
   if (pack?.format !== 'erta-table-pack') throw new Error('Not an Erta Table session pack');
+  npcsForPack(pack);
   c.packs ||= {}; c.clocks ||= [];
   const fresh = !c.packs[pack.id];
   c.packs[pack.id] = pack;
@@ -38,6 +40,7 @@ export function importPack(c, pack) {
     }
     sc.prompt = s.prompt; sc.packRef.section = s.section;
     if (s.squares) sc.squares = s.squares;
+    if (s.combatMusic && trackFor[s.combatMusic] && !sc.combatMusic) sc.combatMusic = trackFor[s.combatMusic];
   }
   // handouts
   c.handouts ||= [];
@@ -258,13 +261,50 @@ export async function loadPackDialog(ctx) {
       el('span', {}), el('div', {}, el('div', { class: 'nm' }, p.title), el('div', { class: 'kind' }, (p.eyebrow || '') + (p.built ? ' · ' + p.built : ''))),
       el('button', { class: 'btn small primary', type: 'button', onclick: async () => { try { const pk = await fetchPack(p.file); m.close(); ctx.loadPack(pk); } catch (e) { toast(e.message, 'bad'); } } }, ctx.camp.packs?.[p.id] ? 'Update' : 'Load')));
   }
-  body.append(el('div', { class: 'lbl', style: { marginTop: '8px' } }, 'Or from a file'),
+  body.append(el('div', { class: 'lbl', style: { marginTop: '8px' } }, 'Straight from your prep'),
+    el('div', { class: 'row' },
+      el('button', { class: 'btn primary', type: 'button', onclick: async () => {
+        const [f] = await pickFiles({ accept: '.html,.htm,text/html' }); if (!f) return;
+        m.close(); await loadPrepFile(f, ctx);
+      } }, 'Load a prep page (.html)…')),
+    el('p', { class: 'small muted' }, 'Save a session or one-shot page from the Project as .html and choose it here (or drop it on the map). Scenes, prompts, soundtrack slots, handouts, NPC cards and item cards come from the page; encounters, clocks and monster stat blocks come from its built-in table data.'),
+    el('div', { class: 'lbl', style: { marginTop: '8px' } }, 'Or a pack file'),
     el('button', { class: 'btn', type: 'button', onclick: async () => {
       const [f] = await pickFiles({ accept: '.json,application/json' }); if (!f) return;
       try { const pk = JSON.parse(await f.text()); m.close(); ctx.loadPack(pk); } catch (e) { toast('That isn’t a session pack', 'bad'); }
     } }, 'Choose pack file…'),
     el('p', { class: 'small muted' }, 'Reloading a pack you already have updates its text, stat blocks and clocks, and adds anything new. Your images, tracks, tokens and clock values stay put.'));
   const m = modal({ title: 'Session packs', body, actions: [{ label: 'Close' }] });
+}
+
+// Build a pack from a prep page in the browser and load it.
+let refData = null;
+async function references() {
+  if (refData) return refData;
+  const get = f => fetch(new URL('../data/' + f, import.meta.url)).then(r => r.ok ? r.json() : {}).catch(() => ({}));
+  const [srd, spells] = await Promise.all([get('srd-monsters-2024.json'), get('srd-spells-2024.json')]);
+  return (refData = { srd, spells });
+}
+export async function loadPrepFile(f, ctx) {
+  let res;
+  try { res = buildPack(await f.text(), await references()); }
+  catch (e) { toast(e.message || 'That page couldn’t be read', 'bad'); return null; }
+  const pk = res.pack;
+  const counts = [[pk.scenes.length, 'scene'], [pk.music.length, 'soundtrack slot'], [pk.handouts.length, 'handout'], [pk.npcs.length, 'NPC'], [pk.items.length, 'item'], [pk.encounters.length, 'encounter'], [pk.clocks.length, 'clock'], [Object.keys(pk.actors).length, 'stat block']]
+    .map(([n, w]) => `${n} ${w}${n === 1 ? '' : 's'}`).join(' · ');
+  const notes = [...res.warnings];
+  if (!res.fromBlock) notes.unshift('This page has no erta-table data block, so encounters, clocks and monsters were read from the page itself. Check them in the Prep tab; pages made from the current templates carry the block and need no checking.');
+  if (notes.length) {
+    const go = await new Promise(resolve => modal({
+      title: `Load “${pk.title}”?`,
+      body: el('div', { class: 'stack' }, el('p', {}, counts), el('ul', { class: 'small' }, notes.map(n => el('li', {}, n)))),
+      actions: [{ label: 'Cancel', value: false }, { label: 'Load it', kind: 'primary', value: true }],
+      onClose: v => resolve(!!v),
+    }));
+    if (!go) return null;
+  }
+  ctx.loadPack(pk);
+  return pk;
 }
 
 export function actorModal(a, onRoll) {

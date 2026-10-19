@@ -46,7 +46,8 @@ export const campaigns = {
 
 export const kv = {
   get: k => tx('kv', 'readonly', s => req(s.get(k))),
-  set: (k, v) => tx('kv', 'readwrite', s => req(s.put(v, k))),
+  set: (k, v) => tx('kv', 'readwrite', s => req(v === undefined ? s.delete(k) : s.put(v, k))),
+  delete: k => tx('kv', 'readwrite', s => req(s.delete(k))),
 };
 
 const urlCache = new Map();

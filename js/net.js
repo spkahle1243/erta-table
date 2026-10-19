@@ -9,9 +9,54 @@ const CFG = () => window.ERTA_TABLE_CONFIG;
 const PREFIX = 'erta-table-';
 const CHUNK = 192 * 1024;
 
+// A TURN relay for players on strict networks (school, office, some mobile carriers):
+// { urls: ['turn:host:443?transport=tcp', …], username, credential, force }.
+// The DM sets it once; player links carry it, so players set nothing up.
+let RELAY = null;
+export function setRelay(r) { RELAY = r && r.urls?.length ? r : null; }
+export function relayIce(r) { return r && r.urls?.length ? [{ urls: r.urls, username: r.username || undefined, credential: r.credential || undefined }] : []; }
+const b64u = s => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64u = s => decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/'))));
+export function encodeRelay(r) { return r && r.urls?.length ? b64u(JSON.stringify({ u: r.urls, n: r.username || '', c: r.credential || '', f: r.force ? 1 : 0 })) : ''; }
+export function decodeRelay(s) { try { const o = JSON.parse(unb64u(s)); return { urls: o.u || [], username: o.n || '', credential: o.c || '', force: !!o.f }; } catch { return null; } }
+
 function peerOptions() {
   const c = CFG();
-  return { ...c.PEER_SERVER, config: { iceServers: c.ICE_SERVERS }, debug: 1 };
+  const config = { iceServers: [...c.ICE_SERVERS, ...relayIce(RELAY)] };
+  if (RELAY?.force) config.iceTransportPolicy = 'relay';
+  return { ...c.PEER_SERVER, config, debug: 1 };
+}
+
+// How a data connection actually travels: 'direct' (same network or a public address),
+// 'relay' (through the TURN server) — and its round trip in ms.
+export async function routeOf(conn) {
+  const pc = conn?.peerConnection; if (!pc?.getStats) return null;
+  try {
+    const st = await pc.getStats();
+    let pair = null;
+    st.forEach(r => { if (r.type === 'transport' && r.selectedCandidatePairId) pair = st.get(r.selectedCandidatePairId); });
+    if (!pair) st.forEach(r => { if (r.type === 'candidate-pair' && (r.selected || (r.nominated && r.state === 'succeeded'))) pair = pair || r; });
+    if (!pair) return null;
+    const lc = st.get(pair.localCandidateId), rc = st.get(pair.remoteCandidateId);
+    const relay = lc?.candidateType === 'relay' || rc?.candidateType === 'relay';
+    return { route: relay ? 'relay' : 'direct', rtt: pair.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) : null, local: lc?.candidateType, remote: rc?.candidateType };
+  } catch { return null; }
+}
+
+// Can this browser reach the relay? Gathers candidates through it only.
+export async function testRelay(r, ms = 8000) {
+  if (!r?.urls?.length) return { ok: false, why: 'No relay address set' };
+  const t0 = performance.now();
+  let pc;
+  try { pc = new RTCPeerConnection({ iceServers: relayIce(r), iceTransportPolicy: 'relay' }); }
+  catch (e) { return { ok: false, why: e.message }; }
+  return new Promise(res => {
+    const done = v => { clearTimeout(timer); try { pc.close(); } catch {} res(v); };
+    const timer = setTimeout(() => done({ ok: false, why: 'The relay didn’t answer. Check the address, user name and password.' }), ms);
+    pc.onicecandidate = e => { if (e.candidate && / typ relay /.test(e.candidate.candidate)) done({ ok: true, ms: Math.round(performance.now() - t0) }); };
+    pc.createDataChannel('t');
+    pc.createOffer().then(o => pc.setLocalDescription(o)).catch(e => done({ ok: false, why: e.message }));
+  });
 }
 
 async function waitForBuffer(conn) {
@@ -33,7 +78,17 @@ export class Host extends Emitter {
     this.clients = new Map(); // peerId -> { conn, info }
     this.status = 'starting';
     this._retry = 0;
+    this._ticks = 0;
     this._destroyed = false;
+  }
+
+  async _measure() {
+    let changed = false;
+    for (const c of this.clients.values()) {
+      const r = await routeOf(c.conn);
+      if (r && (r.route !== c.net?.route || Math.abs((r.rtt || 0) - (c.net?.rtt || 0)) > 15)) { c.net = r; changed = true; }
+    }
+    if (changed) this.emit('clients');
   }
 
   start() {
@@ -50,6 +105,7 @@ export class Host extends Emitter {
         if (now - (c.seen || now) > 12000) { try { c.conn.close(); } catch {} this.clients.delete(pid); this.emit('leave', pid, c.info); this.emit('clients'); continue; }
         if (c.conn.open) try { c.conn.send({ t: 'hb' }); } catch {}
       }
+      if (++this._ticks % 4 === 1) this._measure();
     }, 2500);
     peer.on('disconnected', () => {
       if (this._destroyed || peer.destroyed) return;

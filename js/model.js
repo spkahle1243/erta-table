@@ -155,7 +155,8 @@ export function playerView(c, charId, scene, fogged) {
     const g = scene.grid.size;
     const tokens = [];
     const vis = visionOn(scene);
-    const mine = t => (t.charId && t.charId === charId) || (t.owner && t.owner === charId);
+    // a spectator (no character) sees what the whole party sees
+    const mine = t => charId ? ((t.charId && t.charId === charId) || (t.owner && t.owner === charId)) : !!t.charId;
     let viewers = vis ? scene.tokens.filter(t => mine(t) && !t.hidden) : [];
     if (vis && !viewers.length) viewers = scene.tokens.filter(t => t.charId);
     const lights = vis ? sceneLights(c, scene) : [];
@@ -187,7 +188,7 @@ export function playerView(c, charId, scene, fogged) {
   }
   return {
     campaign: { name: c.name, theme: c.theme },
-    you: me ? { charId: me.id, name: me.name, color: me.color, sheet: me.sheet || null, state: me.state || {}, effects: (me.effects || []).map(e => ({ id: e.id, name: e.name, rounds: e.rounds, origin: e.origin?.name, conc: !!e.conc })), concentration: me.concentration || null, items: me.items || [], light: me.light || null, reactUsed: !!me.reactUsed } : null,
+    you: me ? { charId: me.id, name: me.name, color: me.color, sheet: me.sheet || null, state: me.state || {}, effects: (me.effects || []).map(e => ({ id: e.id, name: e.name, rounds: e.rounds, origin: e.origin?.name, conc: !!e.conc })), concentration: me.concentration || null, items: me.items || [], light: me.light || null, reactUsed: !!me.reactUsed, dice: me.dice || null } : null,
     party, scene: s,
     audio: { music: c.audio.music, ambience: c.audio.ambience },
     handout: c.handout, paused: c.paused,

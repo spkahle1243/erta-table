@@ -96,6 +96,49 @@ function boxNotation(r) {
   return sets.join('+') + '@' + faces.join(',');
 }
 
+// ------------------------------------------------------------------ dice skins
+// tint: the die takes the roller's colour; otherwise the skin's own.
+export const DICE_SKINS = {
+  classic: { name: 'Classic (your colour)', tint: true, texture: 'none', material: 'plastic' },
+  marble: { name: 'Marble', bg: '#E9E3D6', fg: '#2B2218', texture: 'marble', material: 'glass' },
+  obsidian: { name: 'Obsidian', bg: '#15191B', fg: '#E5916A', texture: 'none', material: 'glass' },
+  fire: { name: 'Dragonfire', bg: '#F07A1A', fg: '#2B0D00', texture: 'fire', material: 'metal' },
+  ice: { name: 'Ice', bg: '#A9DCF8', fg: '#0B2A40', texture: 'ice', material: 'glass' },
+  dragon: { name: 'Dragon scale', bg: '#7A1D1D', fg: '#F2D36B', texture: 'dragon', material: 'metal' },
+  astral: { name: 'Astral sea', bg: '#3B2A6B', fg: '#F2EBDD', texture: 'astral', material: 'glass' },
+  stars: { name: 'Night sky', bg: '#14203A', fg: '#F2EBDD', texture: 'stars', material: 'glass' },
+  wood: { name: 'Oak', bg: '#8B5A2B', fg: '#F2EBDD', texture: 'wood', material: 'wood' },
+  bronze: { name: 'Bronze', bg: '#A26B2A', fg: '#2B1A08', texture: 'bronze03', material: 'metal' },
+  steel: { name: 'Steel', bg: '#9AA3A8', fg: '#14181A', texture: 'metal', material: 'metal' },
+  stained: { name: 'Stained glass', tint: true, fg: '#FFFFFF', texture: 'stainedglass', material: 'glass' },
+  glitter: { name: 'Glitter', tint: true, texture: 'glitter', material: 'plastic' },
+  clouds: { name: 'Clouds', tint: true, texture: 'cloudy_2', material: 'plastic' },
+  skulls: { name: 'Bone', bg: '#E8E2D6', fg: '#111111', texture: 'skulls', material: 'plastic' },
+  paper: { name: 'Parchment', bg: '#E6D7B5', fg: '#3A2A14', texture: 'paper', material: 'wood' },
+  leopard: { name: 'Leopard', bg: '#D9A441', fg: '#1B1208', texture: 'leopard', material: 'plastic' },
+  water: { name: 'Water', tint: true, texture: 'water', material: 'glass' },
+};
+export function skinColorset(skin, color) {
+  const s = DICE_SKINS[skin] || DICE_SKINS.classic;
+  const bg = s.tint ? color : s.bg;
+  return { name: `k-${skin || 'classic'}-${String(bg).replace('#', '')}`, foreground: s.fg || readableOn(bg), background: bg, outline: '#0b0f10', texture: s.texture, material: s.material };
+}
+
+// ------------------------------------------------------------------ crit flourish
+// A natural 20 (or 1) on a d20 gets a moment: a burst across the screen and a sound.
+export function flourish(kind, color = '#E5916A', name = '') {
+  const crit = kind === 'crit';
+  const box = el('div', { class: 'flourish ' + kind, 'aria-hidden': 'true', style: { '--c': color } },
+    el('div', { class: 'fl-rays' }),
+    el('div', { class: 'fl-word' }, el('span', { class: 'fl-n' }, crit ? '20' : '1'), el('span', { class: 'fl-t' }, crit ? 'Critical!' : 'Fumble'), name ? el('span', { class: 'fl-who' }, name) : null));
+  if (crit) for (let i = 0; i < 26; i++) {
+    const a = (i / 26) * Math.PI * 2 + Math.random() * 0.2, d = 120 + Math.random() * 220;
+    box.append(el('i', { class: 'fl-spark', style: { '--dx': Math.cos(a) * d + 'px', '--dy': Math.sin(a) * d + 'px', '--dl': (Math.random() * 0.15) + 's' } }));
+  }
+  document.body.append(box);
+  setTimeout(() => box.remove(), crit ? 2600 : 2000);
+}
+
 // ------------------------------------------------------------------ 3D overlay
 
 export class DiceOverlay {
@@ -108,7 +151,10 @@ export class DiceOverlay {
     this.failed = false;
     this.enabled = localStorage.getItem('erta-dice3d') !== 'off';
     this.sound = localStorage.getItem('erta-dice-sound') !== 'off';
+    this.flourishes = localStorage.getItem('erta-flourish') !== 'off';
+    this.onFlourish = null;
   }
+  setFlourishes(v) { this.flourishes = v; localStorage.setItem('erta-flourish', v ? 'on' : 'off'); }
 
   setEnabled(v) { this.enabled = v; localStorage.setItem('erta-dice3d', v ? 'on' : 'off'); }
   setSound(v) { this.sound = v; localStorage.setItem('erta-dice-sound', v ? 'on' : 'off'); if (this.box) this.box.sounds = v; }
@@ -132,13 +178,21 @@ export class DiceOverlay {
     }
   }
 
-  // Animate a roll; resolves when the dice settle (or immediately if 3D is off).
-  show(r, color = '#1C6A51') {
+  // Animate a roll; resolves when the dice settle (or immediately if 3D is off). Then the crit flourish, if any.
+  async show(r, color = '#1C6A51', skin = null) {
+    await this._show(r, color, skin);
+    const d20 = r.terms?.some(t => t.sides === 20);
+    if (d20 && !r.hidden && (r.nat === 20 || r.nat === 1) && this.flourishes) {
+      flourish(r.nat === 20 ? 'crit' : 'fumble', color, r.by?.name || '');
+      this.onFlourish?.(r.nat === 20 ? 'crit' : 'fumble');
+    }
+  }
+  _show(r, color, skin) {
     return new Promise(res => {
       if (!this.enabled) return res();
       const notation = boxNotation(r);
       if (!notation) return res();
-      this.queue.push({ notation, color, res });
+      this.queue.push({ notation, color, skin, res });
       if (this.queue.length > 3) this.queue.shift().res(); // never fall far behind
       this._next();
     });
@@ -153,7 +207,7 @@ export class DiceOverlay {
     try {
       this.layer.classList.add('show');
       clearTimeout(this._hide);
-      await this.box.updateConfig({ theme_customColorset: { name: 'c' + job.color.replace('#', ''), foreground: readableOn(job.color), background: job.color, outline: '#0b0f10', texture: 'none', material: 'plastic' } });
+      await this.box.updateConfig({ theme_customColorset: skinColorset(job.skin, job.color) });
       await Promise.race([this.box.roll(job.notation), new Promise(r => setTimeout(r, 7000))]);
     } catch (e) { console.warn('dice roll failed', e); }
     job.res();

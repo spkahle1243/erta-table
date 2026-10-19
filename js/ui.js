@@ -43,7 +43,7 @@ export function modal({ title, body, actions = [], onClose, wide }) {
   if (body) box.append(body);
   if (actions.length) {
     const foot = el('div', { class: 'foot' });
-    for (const a of actions) foot.append(el('button', { class: 'btn ' + (a.kind || ''), type: 'button', onclick: async () => { const v = a.run ? await a.run() : a.value; if (v !== false) close(v ?? a.value); } }, a.label));
+    for (const a of actions) foot.append(el('button', { class: 'btn ' + (a.kind || ''), type: 'button', onclick: async () => { const v = a.run ? await a.run() : a.value; if (a.run && v === false) return; close(v ?? a.value); } }, a.label));
     box.append(foot);
   }
   back.append(box); document.body.append(back);
@@ -180,4 +180,15 @@ export function avatar(name, color, url) {
   const a = el('span', { class: 'av', style: { background: url ? `url("${url}") center/cover` : (color || '#2a3133'), borderColor: color || 'var(--line)' } });
   if (!url) a.textContent = String(name || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
   return a;
+}
+
+// A cinematic title card over the screen: the scene's name between letterbox bars.
+export function titleCard({ eyebrow = '', title = '', sub = '' } = {}, { mini = false } = {}) {
+  document.querySelector('.title-card' + (mini ? '.mini' : ':not(.mini)'))?.remove();
+  const box = el('div', { class: 'title-card' + (mini ? ' mini' : ''), 'aria-live': 'polite' },
+    mini ? null : el('div', { class: 'tc-bar top' }), mini ? null : el('div', { class: 'tc-bar bot' }),
+    el('div', { class: 'tc-in' }, eyebrow ? el('div', { class: 'tc-eye' }, eyebrow) : null, el('div', { class: 'tc-t' }, title), sub ? el('div', { class: 'tc-sub' }, sub) : null));
+  document.body.append(box);
+  setTimeout(() => box.remove(), mini ? 3200 : 5200);
+  return box;
 }

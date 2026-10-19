@@ -3,6 +3,7 @@
 // what they want to do; the engine rolls (in the player's colour, on every
 // screen), applies the outcome and writes a card to everyone's log.
 
+import { fxKindFor } from './areafx.js';
 import { uid } from './util.js';
 import { roll as rollDice, parseFormula } from './dice.js';
 import { tokenDistanceFt, tokensInTemplate } from './geometry.js';
@@ -953,6 +954,7 @@ export class Engine {
     const acts = this.activities(A, entry, isSpell ? 'spell' : req.src);
     const act = acts[Math.min(opts.activity || 0, Math.max(0, acts.length - 1))];
     const ctx = { level, isSpell, opts, special, conc, template: req.template };
+    if (req.template && act && act.type !== 'heal') this.io.fx?.(req.template, fxKindFor(entry, act));
     if (act) {
       if (act.type === 'attack') await this.doAttacks(A, entry, act, targets, card, ctx);
       else if (act.type === 'save') await this.doSave(A, entry, act, targets, card, ctx);

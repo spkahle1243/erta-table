@@ -2,12 +2,12 @@
 
 import { $, el, throttle, toast, clamp } from './util.js';
 import { assets, persistStorage } from './store.js';
-import { Client } from './net.js';
+import { Client, setRelay, decodeRelay, routeOf } from './net.js';
 import { MapView } from './render.js';
 import { AudioEngine } from './audio.js';
 import { viewAssets } from './model.js';
-import { ICONS, popover, closePopover, hpConditionsEditor, conditionChips, renderHandout, avatar } from './ui.js';
-import { roll as rollDice, withAdvantage, DiceOverlay, RollLog } from './dice.js';
+import { ICONS, popover, closePopover, hpConditionsEditor, conditionChips, renderHandout, avatar, titleCard } from './ui.js';
+import { roll as rollDice, withAdvantage, DiceOverlay, RollLog, DICE_SKINS } from './dice.js';
 import { renderStrip } from './combat.js';
 import { SheetWindow, AREA_SHAPE, needsTarget } from './sheet.js';
 import { LIGHTS, moveBlocked } from './vision.js';
@@ -17,7 +17,9 @@ window.__player = P;
 
 function parseLink() {
   const h = new URLSearchParams(location.hash.slice(1));
-  return { hostId: h.get('h'), key: h.get('k') };
+  const w = h.get('w');
+  return { hostId: h.get('h'), key: w || h.get('k'), watch: !!w, relay: h.get('r') ? decodeRelay(h.get('r')) : null,
+    opts: { auto: h.get('auto') === '1', log: h.get('log') !== '0', party: h.get('party') !== '0', audio: h.get('audio') !== '0' } };
 }
 
 function joinScreen(state, detail = '') {
@@ -29,6 +31,12 @@ function joinScreen(state, detail = '') {
   else if (state === 'denied') inner.append(el('div', { class: 'eyebrow' }, 'Erta Table'), el('h1', {}, 'Link not accepted'), el('p', {}, detail));
   else if (state === 'waiting') inner.append(el('div', { class: 'eyebrow' }, 'Erta Table'), el('h1', {}, 'The table isn’t open yet'), el('p', {}, 'Waiting for your DM to open the campaign. This page will connect on its own.'));
   else if (state === 'connecting') inner.append(el('div', { class: 'eyebrow' }, 'Erta Table'), el('h1', {}, 'Finding the table…'), el('p', {}, 'Connecting to your DM.'));
+  else if (state === 'ready' && P.watch) {
+    inner.append(el('div', { class: 'eyebrow' }, P.view?.campaign?.name || 'Erta Table'), el('h1', {}, 'Spectator view'),
+      el('p', {}, 'What the party sees, with the dice and the music. Nothing here can change the game.'),
+      el('button', { class: 'btn primary', type: 'button', onclick: enter }, 'Start watching'),
+      el('p', { class: 'small muted' }, 'For OBS or a TV: add &auto=1 to the link to skip this screen. &log=0 hides the rolls, &party=0 the party, &audio=0 the sound.'));
+  }
   else if (state === 'ready') {
     const me = P.me;
     inner.append(
@@ -42,6 +50,7 @@ function joinScreen(state, detail = '') {
 
 function enter() {
   P.entered = true;
+  if (P.watch && !P.watch.audio) P.audio.setVolume('master', 0);
   P.audio.unlock();
   $('#join')?.remove();
   render();
@@ -49,12 +58,19 @@ function enter() {
 
 // ------------------------------------------------------------------ boot
 async function boot() {
-  const { hostId, key } = parseLink();
+  const { hostId, key, relay, watch, opts } = parseLink();
   if (!hostId || !key) { joinScreen('bad-link'); return; }
+  setRelay(relay);
+  // Spectator view: read-only, no personal controls, for streaming or a TV at the table.
+  if (watch) {
+    P.watch = opts; document.body.classList.add('watch');
+    if (!opts.log) document.body.classList.add('no-log');
+    if (!opts.party) document.body.classList.add('no-party');
+  }
   persistStorage();
   buildApp();
   joinScreen('connecting');
-  const client = new Client(hostId, { key });
+  const client = new Client(hostId, watch ? { key, role: 'watch' } : { key });
   P.client = client;
   P.audio = new AudioEngine(async id => { await client.ensureAsset(id); return assets.url(id); }, () => client.now());
   try { Object.assign(P.audio.vol, JSON.parse(localStorage.getItem('erta-table-vol') || '{}')); } catch {}
@@ -63,7 +79,7 @@ async function boot() {
     if (!P.entered) { if (s === 'waiting') joinScreen('waiting'); else if (s === 'connecting' || s === 'reconnecting') joinScreen('connecting'); }
   });
   client.on('denied', reason => joinScreen('denied', reason));
-  client.on('welcome', m => { onView(m.view); if (!P.entered) joinScreen('ready'); });
+  client.on('welcome', m => { onView(m.view); if (!P.entered) { if (P.watch?.auto) enter(); else joinScreen('ready'); } });
   client.on('progress', (id, f) => { const chip = $('#loading'); if (chip) { chip.hidden = f >= 1; chip.textContent = `Loading ${Math.round(f * 100)}%`; } });
   client.on('message', onMessage);
   client.start();
@@ -75,7 +91,9 @@ function onMessage(m) {
     case 'drag': P.map.setRemoteDrag(m.id, m.x, m.y); return;
     case 'ruler': P.map.setRemoteRuler(m.key, m.pts ? { pts: m.pts, color: m.color, name: m.name } : null); return;
     case 'ping': P.map.addPing(m.x, m.y, m.color, !!m.pull); return;
-    case 'sfx': P.audio.sfx(m.asset, m.vol); return;
+    case 'title': titleCard(m); return;
+    case 'fx': if (P.view?.scene?.id === m.scene) P.map.playFx(m.tpl, m.kind); return;
+    case 'sfx': if (m.synth) P.audio.synth(m.synth, m.vol); else P.audio.sfx(m.asset, m.vol); return;
     case 'roll': showRoll(m.roll); return;
     case 'rolls': P.log.setAll(m.list); return;
     case 'card': P.log.add(m.card); return;
@@ -158,14 +176,16 @@ function buildApp() {
   P.map.myColor = '#66C39D';
   buildToolbar();
   P.dice = new DiceOverlay();
+  P.dice.onFlourish = k => P.audio?.synth(k);
   const dock = $('#dock');
   dock.append(el('button', { class: 'dock-h', type: 'button', onclick: () => { dock.classList.toggle('closed'); localStorage.setItem('erta-dock', dock.classList.contains('closed') ? 'closed' : 'open'); } }, el('span', {}, 'Dice & rolls'), el('span', { class: 'chev' }, '▾')));
-  if (localStorage.getItem('erta-dock') === 'closed') dock.classList.add('closed');
+  if (localStorage.getItem('erta-dock') === 'closed' && !P.watch) dock.classList.add('closed');
   P.log = new RollLog(dock, { onRoll: (f, o) => myRoll(f, o) });
 }
 
 async function showRoll(r) {
-  await P.dice.show(r, r.by?.color || '#E5916A');
+  const skin = r.by?.dice !== undefined ? r.by.dice : (r.by?.charId && r.by.charId === P.me?.charId ? P.view?.you?.dice : null);
+  await P.dice.show(r, r.by?.color || '#E5916A', skin);
   P.log.add(r, { mine: r.by?.charId === P.me?.charId });
 }
 
@@ -215,6 +235,7 @@ function renderStatus() {
   const map = { online: ['on', 'At the table'], connecting: ['warn', 'Connecting…'], reconnecting: ['warn', 'Reconnecting…'], waiting: ['warn', 'Waiting for DM'], denied: ['bad', 'Link not accepted'] };
   const [cls, txt] = map[s] || ['warn', s || ''];
   n.innerHTML = ''; n.append(el('span', { class: 'dot ' + cls }), txt);
+  if (s === 'online') routeOf(P.client.conn).then(r => { if (r) n.title = `Connected ${r.route === 'relay' ? 'through the relay' : 'directly'}${r.rtt != null ? `, ${r.rtt} ms round trip` : ''}`; });
 }
 
 // ------------------------------------------------------------------ render
@@ -222,7 +243,7 @@ async function render() {
   const v = P.view; if (!v) return;
   $('#title').innerHTML = '';
   $('#title').append(v.scene?.name || v.campaign.name, el('small', {}, v.campaign.name));
-  document.title = (P.me?.name || 'Player') + ' · ' + v.campaign.name;
+  document.title = (P.watch ? 'Watching' : P.me?.name || 'Player') + ' · ' + v.campaign.name;
   renderStatus();
   // map
   const empty = $('#empty');
@@ -397,6 +418,7 @@ async function renderHandoutView() {
   P.handoutKey = key;
   P.handoutEl = renderHandout(h, url, () => { P.dismissed = key; P.handoutEl?.remove(); P.handoutEl = null; P.handoutKey = null; });
   document.body.append(P.handoutEl);
+  if (P.watch) setTimeout(() => { if (P.handoutKey === key) { P.dismissed = key; P.handoutEl?.remove(); P.handoutEl = null; P.handoutKey = null; } }, 15000);
 }
 
 function volumePop(e) {
@@ -406,7 +428,16 @@ function volumePop(e) {
       const s = el('input', { type: 'range', min: 0, max: 1, step: 0.01, value: P.audio.vol[k] });
       s.addEventListener('input', () => { P.audio.setVolume(k, +s.value); try { localStorage.setItem('erta-table-vol', JSON.stringify(P.audio.vol)); } catch {} });
       return s;
-    })()))));
+    })())),
+    el('h4', {}, 'Dice'),
+    (() => {
+      const cur = P.view?.you?.dice || 'classic';
+      const sel = el('select', {}, Object.entries(DICE_SKINS).map(([k, v]) => el('option', { value: k, selected: cur === k }, v.name)));
+      sel.addEventListener('change', () => { P.client.send({ t: 'dice-skin', skin: sel.value }); toast('Your dice: ' + DICE_SKINS[sel.value].name); });
+      return el('label', { class: 'field' }, el('span', {}, 'Your dice (everyone sees them)'), sel);
+    })(),
+    el('label', { class: 'check' }, (() => { const x = el('input', { type: 'checkbox', checked: P.dice.enabled }); x.addEventListener('change', () => P.dice.setEnabled(x.checked)); return x; })(), '3D dice'),
+    el('label', { class: 'check' }, (() => { const x = el('input', { type: 'checkbox', checked: P.dice.flourishes }); x.addEventListener('change', () => P.dice.setFlourishes(x.checked)); return x; })(), 'Natural 20 and 1 flourishes')));
 }
 
 boot();
